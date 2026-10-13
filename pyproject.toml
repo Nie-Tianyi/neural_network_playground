@@ -1,0 +1,35 @@
+[project]
+name = "neural-network-playground"
+version = "0.1.0"
+description = "Visualize PyTorch network training in the browser, TensorFlow-Playground style"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "torch>=2.6",
+    "numpy>=2.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "websockets>=13",
+]
+
+# Windows/Linux 上 PyPI 的默认 torch wheel 是 CUDA 版（约 2.5G）。
+# 这个项目的模型只有几十个参数，却要每帧跑上万格点的前向，
+# GPU 的 kernel launch + 每步强制同步开销远超计算本身，CPU 反而更快。
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+# 这个项目不打包发布（`uv run main.py` 直接从仓库根目录跑），
+# 所以让 pytest 把根目录加进 sys.path 就行，不需要装成 package。
+pythonpath = ["."]
+testpaths = ["tests"]

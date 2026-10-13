@@ -1,0 +1,355 @@
+/* 配色沿用原版的骨架色 #183D4E（标题、按钮、滑条强调色都在用它），
+   三色色带（橙/灰/蓝）只出现在网络图和热力图里，界面本身保持中性 ——
+   这样屏幕上的每一块颜色都有物理含义，不会和 UI 装饰混淆。 */
+
+:root {
+  --ink: #183d4e;
+  --ink-soft: #4a6572;
+  --line: #d8dfe3;
+  --bg: #ffffff;
+  --panel: #f7f9fa;
+  --neg: #f59322;
+  --pos: #0877bd;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Roboto, sans-serif;
+  color: #333;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+/* ── 页头 ───────────────────────────────────────────────── */
+
+header {
+  padding: 14px 24px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+  display: inline-block;
+}
+
+header .subtitle {
+  margin-left: 12px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+header code {
+  background: var(--panel);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+/* ── 顶部播放控制条 ─────────────────────────────────────── */
+
+#top-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+#top-controls button {
+  font: inherit;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+#top-controls button:hover { border-color: var(--ink); }
+
+#top-controls button.playing {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+
+#top-controls .epoch {
+  margin-left: 12px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+#top-controls .status { margin-left: auto; font-size: 12px; }
+#top-controls .status.error { color: #c0392b; font-weight: 600; }
+#top-controls .status.busy { color: var(--ink-soft); }
+
+/* ── 主区域：四列 ───────────────────────────────────────── */
+
+#main-part {
+  display: grid;
+  /* 网络那列用 minmax(0, 1fr)：1fr 的最小尺寸是 min-content，网络图的内容
+     （SVG 的 px 宽度）会把它顶宽，进而把整页撑出横向滚动条。
+     下限写 0 才允许它收缩到内容以下。 */
+  grid-template-columns: 200px minmax(0, 1fr) 320px 190px;
+  gap: 18px;
+  padding: 18px 24px 40px;
+  max-width: 1400px;
+}
+
+.column h4 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 5px;
+  font-weight: 700;
+}
+
+.column h4 .hint {
+  float: right;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: #9aa8b0;
+  text-transform: none;
+}
+
+/* ── 数据列 ─────────────────────────────────────────────── */
+
+.problem-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 10px;
+}
+
+.problem-tabs button {
+  flex: 1;
+  font: inherit;
+  padding: 4px 0;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.problem-tabs button:first-child { border-radius: 4px 0 0 4px; }
+.problem-tabs button:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+.problem-tabs button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+.datasets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.datasets .thumb {
+  cursor: pointer;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  padding: 2px;
+  text-align: center;
+}
+
+.datasets .thumb:hover { background: var(--panel); }
+.datasets .thumb.active { border-color: var(--ink); background: var(--panel); }
+.datasets .thumb canvas { display: block; width: 100%; }
+.datasets .thumb span { font-size: 10px; color: var(--ink-soft); }
+
+button.wide {
+  width: 100%;
+  font: inherit;
+  padding: 5px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+button.wide:hover { border-color: var(--ink); }
+
+/* ── 通用控件 ───────────────────────────────────────────── */
+
+.control { margin-bottom: 11px; }
+
+.control label {
+  display: block;
+  color: var(--ink-soft);
+  margin-bottom: 3px;
+  font-size: 12px;
+}
+
+.control .value { color: var(--ink); font-weight: 600; }
+
+select {
+  width: 100%;
+  font: inherit;
+  padding: 3px 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+}
+
+input[type="range"] { width: 100%; accent-color: var(--ink); }
+
+.checkbox {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.checkbox input { accent-color: var(--ink); margin-right: 4px; }
+
+.model-desc {
+  font-size: 11px;
+  color: #9aa8b0;
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+.model-errors {
+  font-size: 11px;
+  color: #c0392b;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+
+/* ── 网络列 ─────────────────────────────────────────────── */
+
+.shape-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.shape-controls button {
+  font: inherit;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.shape-controls button:hover { border-color: var(--ink); }
+.shape-controls .value { color: var(--ink); font-weight: 600; min-width: 14px; text-align: center; }
+.shape-controls .shape-sep { width: 14px; }
+.shape-controls .shape-label { color: #9aa8b0; }
+
+#network {
+  position: relative;
+  width: 100%;
+  min-height: 200px;
+}
+
+/* 宽度和高度由 JS 按容器实测值设成具体像素，并且和 SVG 的 viewBox 严格相等，
+   所以这里**不能再写 width: 100%** —— 那会让元素尺寸和 viewBox 对不上，
+   浏览器就会插入一次缩放，节点被拉伸。
+   见 web/render/network.js 的 buildDom()。 */
+#net-svg {
+  display: block;
+}
+
+/* 热力图盖在 SVG 上层；pointer-events: none 让它不挡住连线/节点的命中检测 */
+#net-heat {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+#net-svg path.link-hit { pointer-events: stroke; }
+
+.hovercard {
+  position: fixed;
+  display: none;
+  padding: 5px 9px;
+  background: rgba(24, 61, 78, 0.93);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 10;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 输出列 ─────────────────────────────────────────────── */
+
+.metrics { position: relative; margin-bottom: 10px; }
+
+.output-stats {
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+}
+
+.output-stats span { float: right; color: var(--ink); font-weight: 600; }
+.output-stats.train { color: #999; }
+
+#linechart { display: block; margin-top: 6px; width: 100%; height: 80px; }
+
+.heatmap-stack {
+  position: relative;
+  width: 300px;
+  height: 300px;
+}
+
+#heatmap {
+  display: block;
+  width: 300px;
+  height: 300px;
+  /* 100×100 内部缓冲放大到 300×300，靠浏览器插值 —— 这就是原版决策边界
+     那种平滑渐变效果的来源 */
+  image-rendering: auto;
+}
+
+#points {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.colormap { margin: 6px 0 10px; }
+
+/* ── 响应式：窄屏时把超参列折到下面 ─────────────────────── */
+
+/* 默认四列至少要 200+340+320+190 加上间距和内边距 ≈ 1152px，
+   低于这个宽度就必须折叠，否则整个页面会横向溢出。 */
+@media (max-width: 1160px) {
+  #main-part {
+    grid-template-columns: 180px minmax(0, 1fr) 300px;
+  }
+  .col-hyper { grid-column: 1 / -1; }
+  .col-hyper .control { display: inline-block; width: 160px; margin-right: 12px; }
+  #heatmap, #points, .heatmap-stack { width: 260px; height: 260px; }
+}
+
+/* 更窄的窗口：输出列也折下去，网络图独占一行。
+   网格列用 minmax(0, 1fr) 而不是 1fr —— 前者允许收缩到内容宽度以下，
+   否则网络图那列会被内容顶宽。 */
+@media (max-width: 900px) {
+  #main-part {
+    grid-template-columns: 170px minmax(0, 1fr);
+  }
+  .col-output { grid-column: 1 / -1; }
+  /* 输出列变成整行宽之后，.output-stats 里的 float:right 会把数值甩到
+     屏幕最右边，和标签离得老远。这里把内容框住，保持原来的紧凑比例。 */
+  .metrics { max-width: 330px; }
+}

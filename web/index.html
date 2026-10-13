@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neural Network Playground</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Neural Network Playground</h1>
+  <span class="subtitle">PyTorch 版 · 网络结构由你自己在 <code>playground/models.py</code> 里定义</span>
+</header>
+
+<!-- 播放控制条在顶部 —— 原版也是这个位置 -->
+<div id="top-controls">
+  <button id="btn-reset" title="重新随机初始化权重（不换数据）">↺ Reset</button>
+  <button id="btn-play" class="playing-toggle" title="连续训练">▶ Play</button>
+  <button id="btn-pause" class="playing-toggle" title="暂停">⏸ Pause</button>
+  <button id="btn-step" title="只跑一个 epoch">⏭ Step</button>
+  <span class="epoch">Epoch <span id="iter">000000</span></span>
+  <span id="status" class="status"></span>
+</div>
+
+<div id="main-part">
+
+  <!-- ── 数据 ─────────────────────────────────────────────── -->
+  <section class="column col-data">
+    <h4>DATA</h4>
+
+    <div class="problem-tabs" id="problem-tabs">
+      <button data-problem="classification" class="active">分类</button>
+      <button data-problem="regression">回归</button>
+    </div>
+
+    <div id="datasets" class="datasets"></div>
+
+    <button id="btn-regenerate" class="wide">Regenerate</button>
+
+    <div class="control">
+      <label>训练集比例 <span class="value" id="val-ratio">50</span></label>
+      <input type="range" id="ratio" min="10" max="90" step="10" value="50">
+    </div>
+    <div class="control">
+      <label>噪声 <span class="value" id="val-noise">0</span></label>
+      <input type="range" id="noise" min="0" max="50" step="5" value="0">
+    </div>
+    <div class="control">
+      <label>Batch size <span class="value" id="val-batch">10</span></label>
+      <input type="range" id="batch" min="1" max="30" step="1" value="10">
+    </div>
+  </section>
+
+  <!-- ── 网络 ─────────────────────────────────────────────── -->
+  <section class="column col-network">
+    <h4>FEATURES <span class="hint">点击最左侧方块可开关特征</span></h4>
+
+    <div class="shape-controls" id="shape-controls">
+      <span class="shape-label">隐藏层</span>
+      <button id="btn-remove-layer" title="减少一层">−</button>
+      <span id="num-layers" class="value">1</span>
+      <button id="btn-add-layer" title="加一层">+</button>
+      <span class="shape-sep"></span>
+      <span class="shape-label">本层神经元</span>
+      <button id="btn-remove-neuron" title="减少一个神经元">−</button>
+      <span id="num-neurons" class="value">4</span>
+      <button id="btn-add-neuron" title="增加一个神经元">+</button>
+    </div>
+
+    <div id="network">
+      <svg id="net-svg"></svg>
+      <canvas id="net-heat"></canvas>
+    </div>
+
+    <div id="hovercard" class="hovercard"></div>
+  </section>
+
+  <!-- ── 输出 ─────────────────────────────────────────────── -->
+  <section class="column col-output">
+    <h4>OUTPUT</h4>
+
+    <div class="metrics">
+      <div class="output-stats">Test loss <span id="loss-test">0.000</span></div>
+      <div class="output-stats train">Train loss <span id="loss-train">0.000</span></div>
+      <canvas id="losschart" width="330" height="80"></canvas>
+    </div>
+
+    <!-- 两层画布：底层是 100×100 的决策边界（CSS 放大到 300），
+         上层是 300×300 的数据点。分开是因为热力图要用浏览器自带的
+         双线性放大来获得平滑渐变，而数据点必须画在清晰的坐标上。 -->
+    <div class="heatmap-stack">
+      <canvas id="heatmap"></canvas>
+      <canvas id="points" width="300" height="300"></canvas>
+    </div>
+
+    <div class="colormap">
+      <svg width="150" height="30">
+        <defs>
+          <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#f59322"/>
+            <stop offset="50%" stop-color="#e8eaeb"/>
+            <stop offset="100%" stop-color="#0877bd"/>
+          </linearGradient>
+        </defs>
+        <rect x="3" y="10" width="144" height="10" fill="url(#gradient)"/>
+      </svg>
+    </div>
+
+    <label class="checkbox">
+      <input type="checkbox" id="show-test-data" checked> 显示测试数据
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" id="discretize"> 离散化输出
+    </label>
+  </section>
+
+  <!-- ── 超参 ─────────────────────────────────────────────── -->
+  <section class="column col-hyper">
+    <h4>HYPERPARAMETERS</h4>
+
+    <div class="control">
+      <label>模型</label>
+      <select id="model"></select>
+      <div class="model-desc" id="model-desc"></div>
+    </div>
+
+    <div class="control">
+      <label>学习率</label>
+      <select id="lr"></select>
+    </div>
+
+    <div class="control">
+      <label>激活函数</label>
+      <select id="activation"></select>
+    </div>
+
+    <div class="control">
+      <label>优化器</label>
+      <select id="optimizer"></select>
+    </div>
+
+    <div class="control">
+      <label>正则化</label>
+      <select id="reg"></select>
+    </div>
+
+    <div class="control">
+      <label>正则化率</label>
+      <select id="regRate"></select>
+    </div>
+
+    <div id="model-errors" class="model-errors"></div>
+  </section>
+
+</div>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
