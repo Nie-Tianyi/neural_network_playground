@@ -144,3 +144,5 @@ README 的「相对原版的取舍」一节列了所有**有意偏离**及其理
 - 前端不硬编码任何选项清单 —— `config.py` 的 `OPTIONS` 是下拉框的唯一数据源。
 - 前端所有渲染都挂在 `web/render/` 下，`app.js` 只做 WebSocket 和控件绑定。
 - `web/render/network.js` 里 SVG 的 `viewBox` 必须和元素的 CSS 尺寸**严格相等**（1:1 映射）。不要用 `svg.clientWidth` 量宽度 —— SVG 元素上这个属性在 Chrome 里恒为 0；也不要给宽度加"最小下限"，一旦超过容器实际宽度就会撑破容器导致整页横向滚动。
+- **同一列等距分布**：网络图里所有列（输入 / 隐藏层 / 输出）在 `[INPUT_X, 右缘]` 上等距铺开，一套公式管到底。历史上这里分成两段算过（输入列钉常量、隐藏层铺另一个区间），结果相邻列间距完全取决于层数，两层隐藏层时首尾各挤 50px、中间空 500px。
+- **超宽屏的内容居中靠 `padding-inline`，不是 `margin: auto`**：`header` / `#top-controls` / `#main-part` 共用 `padding-inline: max(--page-pad, (100% - --page-width) / 2)`。这样背景色和底部分隔线仍然通铺满宽、只有内容居中。改成 `max-width + margin: auto` 会让超宽屏上出现一条悬空的、和内容同宽的色带。

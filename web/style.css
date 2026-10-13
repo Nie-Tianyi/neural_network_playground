@@ -10,9 +10,27 @@
   --panel: #f7f9fa;
   --neg: #f59322;
   --pos: #0877bd;
+
+  /* 内容区的最大宽度和最小边距。屏幕比这个宽的时候，多出来的空间
+     平均分到左右两边（见下面的 .page-like 规则），内容就居中了。 */
+  --page-width: 1400px;
+  --page-pad: 24px;
 }
 
 * { box-sizing: border-box; }
+
+/* header / 控制条 / 主区域共用同一套水平内边距：
+   视口不超过 --page-width 时就是普通边距；
+   超过时自动变成 (100% - 内容宽度) / 2，把内容推到中间。
+
+   用 padding 而不是 max-width + margin:auto 的好处是
+   **背景色和底部分隔线仍然通铺满宽**，只有内容居中 ——
+   否则超宽屏上会看到一条悬空的、和内容同宽的色带。 */
+header,
+#top-controls,
+#main-part {
+  padding-inline: max(var(--page-pad), (100% - var(--page-width)) / 2);
+}
 
 body {
   margin: 0;
@@ -25,7 +43,7 @@ body {
 /* ── 页头 ───────────────────────────────────────────────── */
 
 header {
-  padding: 14px 24px 10px;
+  padding-block: 14px 10px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -56,7 +74,7 @@ header code {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 24px;
+  padding-block: 8px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
@@ -98,8 +116,8 @@ header code {
      下限写 0 才允许它收缩到内容以下。 */
   grid-template-columns: 200px minmax(0, 1fr) 320px 190px;
   gap: 18px;
-  padding: 18px 24px 40px;
-  max-width: 1400px;
+  padding-block: 18px 40px;
+  /* 水平内边距由文件顶部的 header/#top-controls/#main-part 共用规则给出 */
 }
 
 .column h4 {
