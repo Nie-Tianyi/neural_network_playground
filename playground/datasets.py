@@ -220,7 +220,79 @@ def _multi_gaussian_label(x: float, y: float) -> float:
     return label
 
 
+# --- 一维函数拟合 ------------------------------------------------------------
+#
+# 原版 Playground 只有二维任务（2D 分类 + 2D 回归）。这一组是额外加的，
+# 理由是：**KAN 的招牌能力是 1D 函数拟合，而 circle/spiral 这类 2D 小任务上
+# 它和小 MLP 打得有来有回**，只看那些任务会得出"KAN 好像也没什么"的结论。
+#
+# 一维、且目标是光滑函数时，KAN 每条边的 φ(x) 拼起来就是目标函数本身 ——
+# 这是它区别于 MLP 最直观的地方，也是这一组数据集存在的意义。
+
+# 定义域比二维任务窄：[-3, 3] 足够放下几个周期，又不会让曲线挤成一团。
+DOMAIN_1D = (-3.0, 3.0)
+NUM_SAMPLES_1D = 300
+# 一维网格的点数。二维要 100×100 才填满一个平面，一维 200 个点已经很细了。
+GRID_POINTS_1D = 200
+
+
+def _f_sin(x: float) -> float:
+    return math.sin(3 * x)
+
+
+def _f_cubic(x: float) -> float:
+    return x**3 / 9
+
+
+def _f_exp_sin(x: float) -> float:
+    """复合函数 —— KAN 论文里的招牌例子就是这个形状。"""
+    return math.exp(math.sin(3 * x)) - 1.5
+
+
+def _f_abs(x: float) -> float:
+    """分段线性、在 0 处不可导。用来看基函数的局部性够不够。"""
+    return abs(x) - 1.5
+
+
+def fit_1d(rng: random.Random, num_samples: int, noise: float, fn=None) -> list[Point]:
+    """在定义域上均匀采样 x，标签是 f(x)（可选加高斯噪声）。
+
+    `noise` 在这里被当成标签噪声的**标准差**（二维任务里它各有各的含义，
+    见各生成器的注释）。x 本身不加噪 —— 函数拟合的标准设定就是"输入是准的，
+    观测有噪声"。
+
+    **噪声单独走一条随机流**（只用主随机流生成一次它的种子）。否则噪声的
+    拒绝采样会消耗掉主随机流的 Draw，于是滑动噪声滑条时连 x 的位置都会变 ——
+    而这时候你最想看到的恰恰是"同一批点被加上了抖动"。
+    """
+    lo, hi = DOMAIN_1D
+    noise_rng = random.Random(rng.randrange(2**63))
+    points: list[Point] = []
+    for _ in range(num_samples):
+        x = _rand_uniform(rng, lo, hi)
+        value = fn(x) if fn is not None else 0.0
+        if noise > 0:
+            value += _normal_random(noise_rng, 0.0, noise * noise)
+        # y 恒为 0：一维数据没有第二个坐标轴，Point.y 在这里不参与任何计算。
+        points.append(Point(x, 0.0, value))
+    return points
+
+
+def _make_1d_generator(fn: Callable[[float], float]):
+    def generator(rng: random.Random, num_samples: int, noise: float) -> list[Point]:
+        return fit_1d(rng, num_samples, noise, fn)
+
+    return generator
+
+
 # --- 数据集注册表 ------------------------------------------------------------
+
+
+# 二维任务可用的输入特征。**顺序必须和下面 FEATURES 的插入顺序一致** ——
+# 输入列画的是全部特征、模型只吃选中的那几个，两边下标要对得上。
+FEATURE_IDS_2D = ("x", "y", "xSquared", "ySquared", "xTimesY", "sinX", "sinY")
+# 一维拟合只有一个输入：标量 x。
+FEATURE_IDS_1D = ("x",)
 
 
 @dataclass(frozen=True)
@@ -230,6 +302,19 @@ class DatasetSpec:
     problem: str  # "classification" | "regression"
     num_samples: int
     generator: Callable[[random.Random, int, float], list[Point]]
+
+    # "2d" 画决策边界热力图；"1d" 画函数拟合曲线。两者的采样网格、
+    # 节点渲染方式、输出面板都不一样。
+    mode: str = "2d"
+    domain: tuple[float, float] = X_DOMAIN
+    # 这个数据集允许使用哪些输入特征（决定输入列画几个方块）
+    features: tuple[str, ...] = FEATURE_IDS_2D
+    # 一维模式下用来画"真实函数"参考线的那条曲线
+    truth: Callable[[float], float] | None = None
+
+    @property
+    def is_1d(self) -> bool:
+        return self.mode == "1d"
 
 
 DATASETS: dict[str, DatasetSpec] = {
@@ -241,6 +326,27 @@ DATASETS: dict[str, DatasetSpec] = {
         DatasetSpec("spiral", "Spiral", "classification", NUM_SAMPLES_CLASSIFY, classify_spiral),
         DatasetSpec("plane", "Plane", "regression", NUM_SAMPLES_REGRESS, regress_plane),
         DatasetSpec("multi-gauss", "Multi gaussian", "regression", NUM_SAMPLES_REGRESS, regress_gaussian),
+        # --- 一维函数拟合 ---
+        DatasetSpec(
+            "fit-sin", "sin(3x)", "regression", NUM_SAMPLES_1D,
+            _make_1d_generator(_f_sin),
+            mode="1d", domain=DOMAIN_1D, features=FEATURE_IDS_1D, truth=_f_sin,
+        ),
+        DatasetSpec(
+            "fit-cubic", "x³/9", "regression", NUM_SAMPLES_1D,
+            _make_1d_generator(_f_cubic),
+            mode="1d", domain=DOMAIN_1D, features=FEATURE_IDS_1D, truth=_f_cubic,
+        ),
+        DatasetSpec(
+            "fit-exp-sin", "exp(sin 3x)", "regression", NUM_SAMPLES_1D,
+            _make_1d_generator(_f_exp_sin),
+            mode="1d", domain=DOMAIN_1D, features=FEATURE_IDS_1D, truth=_f_exp_sin,
+        ),
+        DatasetSpec(
+            "fit-abs", "|x|", "regression", NUM_SAMPLES_1D,
+            _make_1d_generator(_f_abs),
+            mode="1d", domain=DOMAIN_1D, features=FEATURE_IDS_1D, truth=_f_abs,
+        ),
     )
 }
 
@@ -323,6 +429,11 @@ def points_to_xy(points: list[Point]) -> tuple[Tensor, Tensor]:
     ys = torch.tensor([p.y for p in points], dtype=torch.float32)
     labels = torch.tensor([p.label for p in points], dtype=torch.float32).unsqueeze(-1)
     return xs, ys, labels
+
+
+def grid_line(domain: tuple[float, float], count: int = GRID_POINTS_1D) -> Tensor:
+    """一维模式的采样网格：定义域上均匀的 x。"""
+    return torch.linspace(domain[0], domain[1], count, dtype=torch.float32)
 
 
 def grid_points(density: int = DENSITY) -> list[tuple[float, float]]:

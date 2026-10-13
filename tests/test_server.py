@@ -170,9 +170,14 @@ def test_static_message_is_json_serializable() -> None:
     assert len(text) > 0
 
     assert {f["id"] for f in message["features"]} == set(FEATURES)
-    assert len(message["datasets"]) == 6
+    assert len(message["datasets"]) == 10  # 6 个二维 + 4 个一维拟合
     assert all(len(d["thumbnail"]) == 200 for d in message["datasets"])
     assert any(m["key"] == "mlp" for m in message["models"])
+    # 一维数据集必须带 mode/domain/features，前端靠它们切换输出面板
+    for dataset in message["datasets"]:
+        assert dataset["mode"] in ("1d", "2d")
+        assert len(dataset["domain"]) == 2
+        assert len(dataset["features"]) >= 1
 
 
 def test_default_config_round_trips_through_the_wire() -> None:

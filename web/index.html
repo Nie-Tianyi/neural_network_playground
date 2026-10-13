@@ -89,12 +89,16 @@
     <!-- 两层画布：底层是 100×100 的决策边界（CSS 放大到 300），
          上层是 300×300 的数据点。分开是因为热力图要用浏览器自带的
          双线性放大来获得平滑渐变，而数据点必须画在清晰的坐标上。 -->
-    <div class="heatmap-stack">
+    <div class="heatmap-stack" id="heatmap-stack">
       <canvas id="heatmap"></canvas>
       <canvas id="points" width="300" height="300"></canvas>
     </div>
 
-    <div class="colormap">
+    <!-- 一维拟合模式用它替换上面的决策边界：真实函数（虚线）+ 模型预测
+         （实线）+ 数据点，全部画在同一张图里。 -->
+    <canvas id="fitplot" width="300" height="300" hidden></canvas>
+
+    <div class="colormap" id="colormap">
       <svg width="150" height="30">
         <defs>
           <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -107,10 +111,18 @@
       </svg>
     </div>
 
+    <!-- 一维模式没有"颜色 = 输出值"这套映射，色标和图例都撤掉，
+         换成曲线的图例 -->
+    <div class="legend" id="fit-legend" hidden>
+      <span><i class="swatch dashed"></i>真实函数</span>
+      <span><i class="swatch solid"></i>模型预测</span>
+      <span><i class="swatch dot"></i>数据点</span>
+    </div>
+
     <label class="checkbox">
       <input type="checkbox" id="show-test-data" checked> 显示测试数据
     </label>
-    <label class="checkbox">
+    <label class="checkbox" id="discretize-row">
       <input type="checkbox" id="discretize"> 离散化输出
     </label>
   </section>

@@ -9,6 +9,7 @@
 
 import { colorFor, linkWidth } from "./palette.js";
 import { blitHeatmap } from "./heatmap.js";
+import { curveValues, drawNodeCurve } from "./curves.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const RECT_SIZE = 30;
@@ -58,7 +59,9 @@ export class NetworkRenderer {
     this.onHoverLink = options.onHoverLink || (() => {});
 
     this.graph = null;
-    this.heatmaps = null;
+    // 最近一帧的可视化数据：二维是热力图数组，一维是曲线数组，靠 this.mode 区分
+    this.visual = null;
+    this.mode = "2d";
     this.layout = null;
     this.signature = "";
     this.lastWidth = 0;
@@ -76,14 +79,21 @@ export class NetworkRenderer {
     // 不加这个判断就会"改高度 → 触发观察 → 再改高度"地转圈。
     if (this.measureWidth() === this.lastWidth) return;
     this.signature = "";
-    // 暂停状态下不会有新帧送进来，所以这里主动重画一次
-    if (this.graph) this.render(this.graph, this.heatmaps);
+    // 暂停状态下不会有新帧送进来，所以这里主动重画一次。
+    // 必须带上 mode —— 一维模式的视觉数据和二维模式是不同的东西，
+    // 漏掉的话窗口一缩放就会用热力图的解读方式去画曲线数组。
+    if (this.graph) this.render(this.graph, this.visual, this.mode);
   }
 
-  /** 每次拿到新一帧就调用。结构没变时只更新颜色/线宽，不重建 DOM。 */
-  render(graph, heatmaps) {
+  /**
+   * 每次拿到新一帧就调用。结构没变时只更新颜色/线宽，不重建 DOM。
+   *
+   * `visual` 是二维模式的热力图数组或一维模式的曲线数组，由 `mode` 决定怎么解读。
+   */
+  render(graph, visual, mode = "2d") {
     this.graph = graph;
-    this.heatmaps = heatmaps;
+    this.visual = visual;
+    this.mode = mode;
 
     // 容器还没布局好（宽度为 0）就攒着，等 ResizeObserver 报出真实尺寸再画。
     if (this.measureWidth() === 0) return;
@@ -98,8 +108,32 @@ export class NetworkRenderer {
     }
 
     this.updateLinks(graph);
-    this.drawHeatmaps(heatmaps);
+    if (mode === "1d") this.drawNodeCurves(visual);
+    else this.drawHeatmaps(visual);
     this.drawEdgeCurves(graph);
+  }
+
+  /**
+   * 一维模式下的节点：把该神经元的激活曲线画进方块。
+   *
+   * 二维模式一个神经元是平面上的一整张图，一维模式下它只是 `激活值 vs x`
+   * 一条线 —— 信息量少得多，但也因此可以直接把线画出来，比热力图更直观。
+   */
+  drawNodeCurves(curves) {
+    const { width, height } = this.layout;
+    this.ctx.clearRect(0, 0, width, height);
+    curves.forEach((encoded, columnIndex) => {
+      if (!encoded) return;
+      this.layout.columns[columnIndex].nodes.forEach((node, nodeIndex) => {
+        drawNodeCurve(
+          this.ctx,
+          curveValues(encoded, nodeIndex),
+          node.cx,
+          node.cy,
+          RECT_SIZE - 2,
+        );
+      });
+    });
   }
 
   /**

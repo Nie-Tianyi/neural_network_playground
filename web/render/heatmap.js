@@ -9,7 +9,7 @@
 
 import { HEATMAP_ALPHA, SHADES, shadeIndex } from "./palette.js";
 
-function decodeBase64(data) {
+export function decodeBase64(data) {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

@@ -114,6 +114,24 @@ canvas 绘制                              ← web/app.js + web/render/*
 
 `update_grid` 里还有个保险：某个输入特征在当前批次方差为 0 时直接返回，否则 `uniform_step=0` 会让 B-spline 递推出现 0/0，最后在 `lstsq` 里报一个完全看不懂的 MKL 错误。
 
+### 一维拟合模式（`spec.mode == "1d"`）
+
+和二维**共用同一条流水线**（前向 → hook → DisplayGraph → 编码），只有三处分支：
+
+| | 二维 | 一维 |
+|---|---|---|
+| 网格 | `grid_points(100)` 的平面 | `grid_line(domain)` 的 200 个 x |
+| 节点视觉 | 10×10 降采样热力图 | `(N,)` 激活曲线（`curves.js`） |
+| 输出面板 | 100×100 决策边界 | 拟合图：真实函数 + 预测 + 数据点 |
+
+**关键技巧：一维网格用 `(x, 0)` 补齐成二维坐标**（`Engine._grid_base`）。所有特征函数都是 `f(x, y)` 的形式，x 这一行的只读第一个参数，y 填什么无所谓 —— 于是 `feature_matrix`、`build_graph`、模型全都零分支复用。不要为了"省一个多余的零"去给这些地方加 if。
+
+另外三处必须记得的：
+
+- **`DATASETS[id].features` 决定输入列画几个方块**。一维数据集只有 `("x",)`，从二维切过来时 `Engine._clamp_features` 会把选中特征夹到还成立的那些 —— 不夹的话模型拿到 in_dim=3、输入列只画 1 个方块，索引立刻错位（就是"边挂到错误特征上"那类 bug）。
+- **一维的噪声走独立随机流**（`fit_1d` 里的 `noise_rng`）。共用主随机流的话，噪声的拒绝采样会消耗掉主流的 Draw，滑动噪声滑条时连 x 的位置都会变 —— 而那时候你最想看的是"同一批点被加上抖动"。
+- **一维数据集的输出层是 linear**（`Config.output_activation` 由 `problem == "regression"` 决定）。拟合 `x³/9` 时标签能到 ±3，分类用的 tanh 会把它夹死。
+
 ### engine.py 不依赖 Web
 
 `Engine` 是纯 Python 类（`reset()` / `step()` / `snapshot()`），故意不碰 fastapi。好处：「多实验对比」= 同时持有多个 Engine 同步推进；能在 Jupyter 里直接用；能脱离浏览器做单测。

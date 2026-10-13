@@ -32,9 +32,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import torch
+
 from . import serialize
 from .config import DEFAULTS, OPTIONS, Config
-from .datasets import DATASETS, DENSITY, FEATURES
+from .datasets import DATASETS, DENSITY, FEATURES, grid_line
 from .engine import Engine
 from .registry import ModelRegistry, default_registry
 
@@ -69,23 +71,42 @@ class Session:
 
     def data_message(self) -> dict:
         assert self.engine.train is not None and self.engine.test is not None
-        return {
+        assert self.engine.cfg is not None
+        spec = DATASETS[self.engine.cfg.dataset]
+
+        message = {
             "type": "data",
+            "mode": spec.mode,
+            "domain": list(spec.domain),
             "train": _encode_points(self.engine.train.points),
             "test": _encode_points(self.engine.test.points),
-            "domain": [-6, 6],
         }
+        if spec.is_1d:
+            # 拟合图要画"真实函数"作为参考线，前端算不了，这里一并送过去。
+            x_axis = grid_line(spec.domain)
+            message["gridX"] = serialize.encode_line(x_axis)
+            message["truth"] = serialize.encode_line(
+                torch.tensor([spec.truth(float(v)) for v in x_axis])
+            )
+        return message
 
     def frame(self) -> dict:
         graph, payload = self.engine.snapshot()
-        return {
+        message = {
             "type": "frame",
+            "mode": "1d" if self.engine.is_1d else "2d",
             "iter": payload["iter"],
             "lossTrain": payload["lossTrain"],
             "lossTest": payload["lossTest"],
             "graph": serialize.encode_graph(graph),
-            "heatmaps": [serialize.encode_heatmap(h) for h in payload["heatmaps"]],
         }
+        if self.engine.is_1d:
+            message["curves"] = [
+                serialize.encode_curve_columns(a) for a in payload["curves"]
+            ]
+        else:
+            message["heatmaps"] = [serialize.encode_heatmap(h) for h in payload["heatmaps"]]
+        return message
 
     def advance(self) -> dict:
         """跑一个 epoch 并编码成一条帧消息。"""
@@ -297,7 +318,11 @@ def _static_message(registry: ModelRegistry, cfg: Config) -> dict:
                 "id": d.id,
                 "title": d.title,
                 "problem": d.problem,
+                "mode": d.mode,
+                "domain": list(d.domain),
                 "numSamples": d.num_samples,
+                # 这个数据集允许用哪些输入特征 —— 前端靠它决定输入列画几个方块
+                "features": list(d.features),
                 "thumbnail": _dataset_thumbnail(d.id),
             }
             for d in DATASETS.values()

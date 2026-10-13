@@ -87,6 +87,34 @@ def encode_payload(payload: EdgePayload) -> dict[str, Any]:
     return {"kind": "opaque", "label": type(payload).__name__}
 
 
+def encode_curve_columns(activations: Tensor) -> dict[str, Any]:
+    """一维模式的每列激活 → 每通道一条量化曲线。
+
+    (N, width) → 通道优先的 uint8，值域 [-1,1] 线性映射到 [0,255]。
+    和热力图用同一套约定（固定 ±1 的标度、超出截断），
+    这样节点上的迷你曲线和二维模式的热力图是**可比的**：
+    一条贴着中线的平线就真的表示"这个神经元没在输出什么"。
+    """
+    a = activations.detach().to("cpu")
+    length, width = a.shape
+    quantized = (a.t().clamp(-1.0, 1.0) + 1.0).mul(127.5).round().to(torch.uint8).contiguous()
+    return {
+        "channels": width,
+        "length": length,
+        "data": base64.b64encode(quantized.numpy().tobytes()).decode("ascii"),
+    }
+
+
+def encode_line(values: Tensor) -> list[float]:
+    """一条曲线，按原始浮点数发。
+
+    输出层的预测值经常跑到 [-1,1] 之外（`x³/9` 能到 ±3），而拟合图是自动
+    缩放的纵轴 —— 量化到 ±1 会把两端削平，所以这里不做量化。
+    200 个点也就 1.5KB 左右。
+    """
+    return [round(float(v), 5) for v in values.detach().to("cpu").flatten()]
+
+
 def _round_list(values: list[float], digits: int = 4) -> list[float]:
     return [round(float(v), digits) for v in values]
 

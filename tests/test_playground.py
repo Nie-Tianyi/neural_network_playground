@@ -45,6 +45,15 @@ def test_dataset_structural_invariants(dataset_id: str) -> None:
 
     assert len(points) == spec.num_samples
 
+    if spec.is_1d:
+        # 一维拟合：y 恒为 0（不参与任何计算），标签范围由目标函数决定，
+        # 所以这里只查"落在定义域内"和"确实是那个函数的值"。
+        for p in points:
+            assert spec.domain[0] <= p.x <= spec.domain[1]
+            assert p.y == 0.0
+            assert p.label == pytest.approx(spec.truth(p.x), abs=1e-9)
+        return
+
     if spec.problem == "classification":
         labels = {p.label for p in points}
         assert labels <= {1.0, -1.0}
@@ -130,6 +139,17 @@ _CONVERGENCE_BUDGET = {
     "plane": 150,
     "multi-gauss": 400,
     "spiral": 1500,
+    # 一维拟合里**振荡函数才是最难的**，实测（8×8 tanh，默认 SGD）：
+    #     x³/9      2 个 epoch 就到起始 loss 的 20%
+    #     |x|      16 个
+    #     sin(3x)  ~410 个
+    #     exp(sin3x) ~440 个
+    # 直觉上会觉得 |x| 在 0 处不可导、应该最难，但它只是两段单调曲线拼起来的；
+    # 而 sin(3x) 要求在定义域上拟合出多个完整振荡。给两倍的余量。
+    "fit-sin": 900,
+    "fit-exp-sin": 900,
+    "fit-cubic": 200,
+    "fit-abs": 200,
 }
 
 
@@ -138,7 +158,7 @@ def test_loss_decreases(dataset_id: str, registry: ModelRegistry) -> None:
     """每个数据集上，训练都要让 loss 显著下降。"""
     engine = Engine(registry)
     engine.configure(
-        Config(dataset=dataset_id, features=("x", "y"), network_shape=(8, 8), seed=5.0)
+        Config(dataset=dataset_id, network_shape=(8, 8), seed=5.0)
     )
     start = engine.losses.train
     for _ in range(_CONVERGENCE_BUDGET[dataset_id]):

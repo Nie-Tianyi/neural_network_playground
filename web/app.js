@@ -7,8 +7,7 @@ import { colorFor } from "./render/palette.js";
 import { drawHeatmap } from "./render/heatmap.js";
 import { LossChart } from "./render/losschart.js";
 import { NetworkRenderer } from "./render/network.js";
-
-const DOMAIN = [-6, 6];
+import { FitPlot, curveValues } from "./render/curves.js";
 
 const state = {
   config: {},
@@ -20,10 +19,18 @@ const state = {
   lastIter: -1,
   playing: false,
   autoplayStarted: false,
+  // "2d" 画决策边界，"1d" 画函数拟合。由服务端在 data/frame 消息里给，
+  // 前端不自己推导 —— 数据集的分辨率、网格点数、输出面板布局都是跟着它走的。
+  mode: "2d",
+  domain: [-6, 6],
+  gridX: null,
+  truth: null,
 };
 
 let ws = null;
 let reconnectTimer = null;
+// 最近一帧。切换纯显示选项时用它原地重画，不用再向服务端要一次。
+let lastFrame = null;
 
 /**
  * 从 URL 查询参数读初始配置，例如
@@ -89,6 +96,12 @@ function handleMessage(message) {
     case "data":
       state.train = message.train;
       state.test = message.test;
+      state.mode = message.mode || "2d";
+      state.domain = message.domain || [-6, 6];
+      state.gridX = message.gridX || null;
+      state.truth = message.truth || null;
+      applyMode(state.mode);
+      if (state.mode === "1d") fitPlot.setData(message);
       drawPoints();
       break;
     case "frame":
@@ -231,12 +244,14 @@ function renderDatasetThumbs(datasets) {
     div.className = "thumb";
     div.dataset.id = dataset.id;
     div.dataset.problem = dataset.problem;
+    div.dataset.mode = dataset.mode;
     if (dataset.id === state.config.dataset) div.classList.add("active");
 
     const canvas = document.createElement("canvas");
     canvas.width = 60;
     canvas.height = 60;
-    drawThumbnail(canvas, dataset.thumbnail);
+    if (dataset.mode === "1d") drawThumbnail1D(canvas, dataset.thumbnail, dataset.domain);
+    else drawThumbnail(canvas, dataset.thumbnail);
 
     const label = document.createElement("span");
     label.textContent = dataset.title;
@@ -261,12 +276,53 @@ function drawThumbnail(canvas, points) {
     // 缩略图统一用主图的朝向（y 向上）。原版这里 y 轴是反的，
     // 于是螺旋缩略图和主图是镜像的 —— 属于原版的无心之失，不复刻。
     ctx.fillRect(
-      (size * (x - DOMAIN[0])) / 12 - 2,
-      (size * (DOMAIN[1] - y)) / 12 - 2,
+      (size * (x + 6)) / 12 - 2,
+      (size * (6 - y)) / 12 - 2,
       4,
       4,
     );
   }
+}
+
+/**
+ * 一维数据集的缩略图：把 f(x) 画成一条折线。
+ *
+ * 二维缩略图按 (x, y) 散点画，而一维数据的 y 恒为 0 —— 那样画出来会是
+ * 贴着中线的一条彩色直线，什么也看不出来。
+ */
+function drawThumbnail1D(canvas, points, domain) {
+  const ctx = canvas.getContext("2d");
+  const size = canvas.width;
+  const [lo, hi] = domain || [-3, 3];
+  ctx.clearRect(0, 0, size, size);
+
+  const labels = points.map((p) => p[2]);
+  let yLo = Math.min(...labels);
+  let yHi = Math.max(...labels);
+  if (yHi - yLo < 1e-6) {
+    yHi += 1;
+    yLo -= 1;
+  }
+  const pad = (yHi - yLo) * 0.12;
+  yLo -= pad;
+  yHi += pad;
+
+  const toPx = (x) => ((x - lo) / (hi - lo)) * size;
+  const toPy = (y) => size - ((y - yLo) / (yHi - yLo)) * size;
+
+  // 按 x 排序再连线 —— 缩略图的点是无序的，连错了会得到一团乱麻
+  const sorted = [...points].sort((a, b) => a[0] - b[0]);
+  ctx.beginPath();
+  ctx.strokeStyle = "#183D4E";
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = "round";
+  for (let i = 0; i < sorted.length; i++) {
+    const px = toPx(sorted[i][0]);
+    const py = toPy(sorted[i][2]);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
 }
 
 function applyProblemFilter(problem) {
@@ -290,28 +346,65 @@ const network = new NetworkRenderer(
 );
 
 const lossChart = new LossChart(document.getElementById("losschart"));
+const fitPlot = new FitPlot(document.getElementById("fitplot"));
 
-function renderFrame(frame) {
+/** 只重画、不推进任何状态。用于切换纯显示选项（显示测试数据、离散化）。 */
+function requestFrameRedraw() {
+  if (lastFrame) renderFrame(lastFrame, { redrawOnly: true });
+}
+
+function renderFrame(frame, { redrawOnly = false } = {}) {
+  lastFrame = frame;
+
   document.getElementById("iter").textContent = String(frame.iter).padStart(6, "0");
   document.getElementById("loss-train").textContent = frame.lossTrain.toFixed(3);
   document.getElementById("loss-test").textContent = frame.lossTest.toFixed(3);
   setStatus("");
 
-  // iter 归零说明引擎重置过（Reset / 换数据集 / 换模型），曲线也跟着重来。
-  // 调学习率之类的不会重置 iter，所以曲线不会被清掉 —— 这是有意的。
-  if (frame.iter <= state.lastIter && frame.iter <= 1) lossChart.reset();
-  state.lastIter = frame.iter;
-  lossChart.addPoint(frame.lossTrain, frame.lossTest);
+  if (!redrawOnly) {
+    // iter 归零说明引擎重置过（Reset / 换数据集 / 换模型），曲线也跟着重来。
+    // 调学习率之类的不会重置 iter，所以曲线不会被清掉 —— 这是有意的。
+    if (frame.iter <= state.lastIter && frame.iter <= 1) lossChart.reset();
+    state.lastIter = frame.iter;
+    lossChart.addPoint(frame.lossTrain, frame.lossTest);
+  }
 
-  network.render(frame.graph, frame.heatmaps);
+  const mode = frame.mode || "2d";
+  if (mode === "1d") {
+    network.render(frame.graph, frame.curves, "1d");
+    // 输出层的曲线就是模型学到的函数，直接画到拟合图上和真实函数对比
+    const output = frame.curves[frame.curves.length - 1];
+    fitPlot.draw(Array.from(curveValues(output, 0)), visiblePoints());
+  } else {
+    network.render(frame.graph, frame.heatmaps, "2d");
+    // 最后一列是输出层，它的全分辨率热力图就是主决策边界
+    drawHeatmap(
+      document.getElementById("heatmap"),
+      frame.heatmaps[frame.heatmaps.length - 1],
+      0,
+      state.discretize,
+    );
+  }
+}
 
-  // 最后一列是输出层，它的全分辨率热力图就是主决策边界
-  drawHeatmap(
-    document.getElementById("heatmap"),
-    frame.heatmaps[frame.heatmaps.length - 1],
-    0,
-    state.discretize,
-  );
+/** 当前该显示的数据点：训练集 + （勾选时）测试集。 */
+function visiblePoints() {
+  return state.showTestData ? [...state.train, ...state.test] : state.train;
+}
+
+/**
+ * 按数据集模式切换界面。
+ *
+ * 二维模式有"颜色 = 输出值"这套映射，所以有色标、有离散化开关；
+ * 一维模式画的是曲线，这些都没有意义，换成曲线图例。
+ */
+function applyMode(mode) {
+  const is1d = mode === "1d";
+  document.getElementById("heatmap-stack").hidden = is1d;
+  document.getElementById("fitplot").hidden = !is1d;
+  document.getElementById("colormap").hidden = is1d;
+  document.getElementById("fit-legend").hidden = !is1d;
+  document.getElementById("discretize-row").hidden = is1d;
 }
 
 function drawPoints() {
@@ -320,8 +413,13 @@ function drawPoints() {
   const size = canvas.width;
   ctx.clearRect(0, 0, size, size);
 
-  const toPx = (x) => ((x - DOMAIN[0]) / 12) * size;
-  const toPy = (y) => ((DOMAIN[1] - y) / 12) * size;
+  // 一维模式的数据点画在拟合图里（那里才有正确的坐标轴），这里留空
+  if (state.mode === "1d") return;
+
+  const [lo, hi] = state.domain;
+  const span = hi - lo;
+  const toPx = (x) => ((x - lo) / span) * size;
+  const toPy = (y) => ((hi - y) / span) * size;
 
   const draw = (points, isTest) => {
     ctx.strokeStyle = isTest ? "black" : "white";
@@ -429,10 +527,14 @@ function bindControls() {
   on("show-test-data", "change", (event) => {
     state.showTestData = event.target.checked;
     drawPoints();
+    // 一维模式的数据点是画在拟合图里的，得让它重画一次
+    if (state.mode === "1d") requestFrameRedraw();
   });
   on("discretize", "change", (event) => {
     state.discretize = event.target.checked;
-    send({ cmd: "step" }); // 让服务端重发一帧，用同一个迭代重画
+    // 纯显示选项，本地重画就行。之前这里是发 step 让服务端重发一帧，
+    // 结果是"勾一下离散化"顺手多训了一个 epoch —— 调显示选项不该改变训练状态。
+    requestFrameRedraw();
   });
 
   for (const button of document.querySelectorAll("#problem-tabs button")) {

@@ -30,11 +30,13 @@ from torch import Tensor
 from .adapters.base import default_adapter_registry
 from .config import Config
 from .datasets import (
+    DATASETS,
     DENSITY,
     FEATURES,
     Point,
     feature_matrix,
     generate,
+    grid_line,
     grid_points,
     points_to_xy,
 )
@@ -98,6 +100,8 @@ class Engine:
         数据只在**影响数据的字段**变化时重新生成 —— 调学习率不该把你训到一半的
         结果清掉，原版也是这个行为。
         """
+        cfg = self._clamp_features(cfg)
+
         previous = self.cfg
         self.cfg = cfg
 
@@ -112,6 +116,23 @@ class Engine:
             self._regenerate_data()
         if data_changed or model_changed:
             self.reset()
+
+    @staticmethod
+    def _clamp_features(cfg: Config) -> Config:
+        """把输入特征限制在当前数据集允许的范围内。
+
+        从二维数据集切到一维拟合时，原来选中的 (x, y, x²) 里只有 x 还有意义
+        —— 剩下那些的输入列上根本不存在对应的方块。不夹住的话模型会拿到
+        in_dim=3 而输入列只画 1 个方块，索引立刻对不上。
+        """
+        available = DATASETS[cfg.dataset].features
+        kept = tuple(f for f in cfg.features if f in available)
+        if kept:
+            return cfg if kept == cfg.features else cfg.replace(features=kept)
+
+        # 一个都不剩就回落到默认：一维就是它唯一的那个，二维是前两个
+        spec = DATASETS[cfg.dataset]
+        return cfg.replace(features=available if spec.is_1d else available[:2])
 
     @staticmethod
     def _data_fingerprint(cfg: Config) -> tuple:
@@ -358,8 +379,22 @@ class Engine:
 
     # --- 可视化 -------------------------------------------------------------
 
-    def _grid_xy(self) -> Tensor:
-        """决策边界采样网格的坐标。网格是固定的，只算一次。"""
+    def _grid_base(self) -> Tensor:
+        """采样网格的 (x, y) 坐标，形状 (N, 2)。
+
+        - 二维：100×100 的方格（原版的决策边界分辨率）
+        - 一维：定义域上的一行点，**y 填 0**
+
+        一维这里把 y 补成 0 是为了让下游完全不用分支：所有特征函数都是
+        `f(x, y)` 的形式，x 这一行的特征函数只用第一个参数，y 取什么无所谓。
+        于是 `feature_matrix`、`build_graph`、模型全都原样复用。
+        """
+        assert self.cfg is not None
+        spec = DATASETS[self.cfg.dataset]
+        if spec.is_1d:
+            x = grid_line(spec.domain)
+            return torch.stack([x, torch.zeros_like(x)], dim=-1)
+
         if self._grid_xy_cache is None:
             self._grid_xy_cache = torch.tensor(grid_points(DENSITY), dtype=torch.float32)
         return self._grid_xy_cache
@@ -367,17 +402,22 @@ class Engine:
     def _grid_input(self) -> Tensor:
         """喂给模型的那份网格输入，只含**当前选中的**特征。"""
         assert self.cfg is not None
-        xy = self._grid_xy()
-        return feature_matrix(xy[:, 0], xy[:, 1], self.cfg.features)
+        base = self._grid_base()
+        return feature_matrix(base[:, 0], base[:, 1], self.cfg.features)
 
     def _grid_all_features(self) -> Tensor:
-        """全部 7 个特征在网格上的取值。
+        """数据集允许的**全部**特征在网格上的取值。
 
         输入列要把没选中的特征也画出来（它们是可点击的开关），
         而那些特征的取值不在前向传播的路径上，只能在这儿单独算一份。
+        一维数据集只有 "x" 一个可用特征，所以这一列只有一个方块。
         """
-        xy = self._grid_xy()
-        return feature_matrix(xy[:, 0], xy[:, 1], tuple(FEATURES))
+        base = self._grid_base()
+        return feature_matrix(base[:, 0], base[:, 1], self._available_features())
+
+    def _available_features(self) -> tuple[str, ...]:
+        assert self.cfg is not None
+        return DATASETS[self.cfg.dataset].features
 
     def snapshot(self) -> tuple[DisplayGraph, dict]:
         """跑一遍网格前向，产出这一帧的图和热力图。
@@ -391,31 +431,40 @@ class Engine:
         assert self.model is not None and self.cfg is not None
         self.model.eval()
 
-        # 输入列画全部特征，但模型只吃选中的那些。这里算的是
+        # 输入列画数据集允许的全部特征，但模型只吃选中的那些。这里算的是
         # "模型的第 k 个输入 → 显示列里的第几个方块" 的映射，
         # 顺序必须和 cfg.features 一致（那是模型的列顺序）。
-        display_index = {fid: i for i, fid in enumerate(FEATURES)}
+        available = self._available_features()
+        display_index = {fid: i for i, fid in enumerate(available)}
         graph = build_graph(
             self.model,
             self._grid_input(),
-            [FEATURES[fid].label for fid in FEATURES],
+            [FEATURES[fid].label for fid in available],
             [display_index[fid] for fid in self.cfg.features],
             self.adapters,
             input_grid=self._grid_all_features(),
             dead_lookup=self._dead_masks_for,
         )
 
-        heatmaps = [_downsample(a, DENSITY, NEURON_DENSITY) for a in graph.activations]
-        # 输出列保留全分辨率 —— 它就是主决策边界图。
-        heatmaps[-1] = _as_grid(graph.activations[-1], DENSITY)
-
         payload = {
             "iter": self.iter,
             "lossTrain": self.losses.train,
             "lossTest": self.losses.test,
-            "heatmaps": heatmaps,
         }
+        if self.is_1d:
+            # 一维：每列的激活就是一条 (N,) 的曲线，不需要降采样
+            payload["curves"] = [a.detach() for a in graph.activations]
+        else:
+            heatmaps = [_downsample(a, DENSITY, NEURON_DENSITY) for a in graph.activations]
+            # 输出列保留全分辨率 —— 它就是主决策边界图。
+            heatmaps[-1] = _as_grid(graph.activations[-1], DENSITY)
+            payload["heatmaps"] = heatmaps
         return graph, payload
+
+    @property
+    def is_1d(self) -> bool:
+        assert self.cfg is not None
+        return DATASETS[self.cfg.dataset].is_1d
 
 
 def _update_grid_hook(module: torch.nn.Module, args: tuple) -> None:
