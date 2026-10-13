@@ -350,7 +350,11 @@ function showHovercard(payload, x, y) {
   if (payload.kind === "scalar") {
     card.textContent = `Weight ${payload.value.toFixed(3)}${payload.dead ? "  (已剪枝)" : ""}`;
   } else if (payload.kind === "curve") {
-    card.textContent = `φ(x) 重要性 ${payload.importance.toFixed(3)}`;
+    // KAN 的边是一个函数，所以要说清"在哪个区间上"以及"有多重要"。
+    // 重要性 |φ|₁ 是这一层的**局部**指标（论文 Eq.2.17），不是对最终输出的归因。
+    const lo = payload.xs[0].toFixed(2);
+    const hi = payload.xs[payload.xs.length - 1].toFixed(2);
+    card.textContent = `φ(x)  x ∈ [${lo}, ${hi}]   |φ|₁ = ${payload.importance.toFixed(3)}`;
   } else {
     card.textContent = payload.label || payload.kind;
   }

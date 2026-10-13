@@ -91,7 +91,28 @@ canvas 绘制                              ← web/app.js + web/render/*
 
 `Registry` 按 `priority` 降序匹配，所以更具体的 adapter（KANLinear）自然覆盖通用的那个。`describe()` 抛异常会被 `Registry.describe` 兜住并降级成 opaque。
 
-`DescribeContext` 里有三样 adapter 自己拿不到、必须从外面传的东西：`input_range`（KAN 画曲线要用该层输入的**实测范围**）、`dead_masks`（只有引擎知道哪些连接被 L1 冻死了）。
+`DescribeContext` 里有几样 adapter 自己拿不到、必须从外面传的东西：`input_range`（该层输入的实测范围）、`dead_masks`（只有引擎知道哪些连接被 L1 冻死了）。
+
+**adapter 的 `role()` 和 `describe()` 是两个方法，别合并**。Tracer 每跑一次前向就要对每个叶子模块问一次角色；一律走 `describe()` 的话，KAN 那种要算上百条曲线的会在每帧白算两遍。角色一般看类型就能定。兜底 adapter 用 `is_fallback = True` 标记，`Registry.recognizes()` 靠它区分"真的认识这个模块"和"被兜底规则捞进来的"。
+
+### 挑选 forward hook 的挂载点：判据是"认不认识"，不是"有没有子模块"
+
+`introspection._select_hook_targets` 的规则是：**能匹配到专用 adapter 的模块就地挂钩、不再下潜**；认不出来的模块有子模块就继续下潜（当容器），没有就自己挂钩（当叶子）。
+
+写成"只挂没有子模块的叶子"是错的 —— `KANLinear` 内部有个 `self.base_activation`，
+于是它会被当成容器跳过，只记录到那个 SiLU，**整个 KAN 层从图上消失**，而且不报错。
+
+### 两种"插桩"约定
+
+- `explain()`：层主动导出 hooks 拿不到的信息（KAN 的边函数曲线），配一个 adapter 就能画。
+- `update_grid()`：**名字被引擎硬编码**。实现了它的层会在 `reset()` 时、以及每 `cfg.grid_update_every` 个 epoch 被调用一次，参数是**该层自己的输入**。引擎用 forward pre-hook 投递，因为第二层的输入必须用第一层更新后的网格算出来 —— pre-hook 天然满足 `L1.update → L1.forward → L2.update → L2.forward` 这个顺序。
+
+### KAN 的两个静默失效（都不会报错，只会让结果看起来"KAN 好像不行"）
+
+1. **数据跑出 spline 网格**：B-spline 基函数在网格外恒为 0，`φ` 退化成 `w_b·silu(x)`。KANLinear 默认网格 `[-1,1]` 而 Playground 数据在 `[-6,6]`，不对齐就是"假 KAN"。引擎在 `reset()` 里调 `_refresh_grids` 解决。
+2. **`update_grid` 衰减 spline 分支**：上游参考实现的 bug —— 用乘过 `spline_scaler` 的曲线去拟合没乘 scaler 的系数，前向又再乘一次，于是每次调用都把 spline 输出整体乘一个 |scaler|。pykan 一辈子只更新十几次网格所以没暴露，我们每 20 步一次是指数累积的（40 次后 spline_weight 从 1e-8 掉到 1e-24）。修法是**两边都不带 scaler**（`orig_coeff = self.spline_weight`），`tests/test_kan.py::test_update_grid_preserves_the_function` 钉的就是这条不变量。
+
+`update_grid` 里还有个保险：某个输入特征在当前批次方差为 0 时直接返回，否则 `uniform_step=0` 会让 B-spline 递推出现 0/0，最后在 `lstsq` 里报一个完全看不懂的 MKL 错误。
 
 ### engine.py 不依赖 Web
 

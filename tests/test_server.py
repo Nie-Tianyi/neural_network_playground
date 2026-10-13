@@ -114,6 +114,42 @@ def test_none_current_config_uses_defaults() -> None:
     assert cfg.activation == Config().activation
 
 
+def test_switching_model_applies_its_suggested_hyperparameters() -> None:
+    """换模型要带上它建议的超参 —— KAN 用 MLP 的默认 SGD/0.03 基本学不动。
+
+    这条在服务端做而不是只靠前端，是因为 `?model=kan` 这种 URL 直接进来的
+    路径也要生效，否则分享出去的链接会给别人一套错误的超参。
+    """
+    from playground.registry import default_registry
+
+    registry = default_registry()
+    cfg = _config_from_payload({"model": "kan"}, Config(), registry)
+
+    spec = registry.get("kan")
+    assert cfg.optimizer == spec.defaults["optimizer"]
+    assert cfg.learning_rate == spec.defaults["learningRate"]
+
+
+def test_explicit_fields_win_over_model_defaults() -> None:
+    """URL 里显式写了学习率，就不该被模型建议值覆盖。"""
+    from playground.registry import default_registry
+
+    cfg = _config_from_payload(
+        {"model": "kan", "learningRate": 0.3}, Config(), default_registry()
+    )
+    assert cfg.learning_rate == 0.3
+
+
+def test_model_defaults_do_not_apply_when_model_is_unchanged() -> None:
+    """模型没变就不该动用户的超参 —— 否则每次刷新页面都会把调好的参数重置。"""
+    from playground.registry import default_registry
+
+    current = Config(model="kan", learning_rate=0.05, optimizer="momentum")
+    cfg = _config_from_payload({"model": "kan"}, current, default_registry())
+    assert cfg.learning_rate == 0.05
+    assert cfg.optimizer == "momentum"
+
+
 def test_problem_and_output_activation_derived_from_dataset() -> None:
     """问题类型和输出层激活是**推导**出来的，不是独立可设的字段。"""
     assert _config_from_payload({"dataset": "circle"}, Config()).problem == "classification"

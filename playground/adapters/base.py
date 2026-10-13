@@ -136,9 +136,22 @@ class LayerAdapter(Protocol):
     name: str
     priority: int
 
+    # 兜底的 adapter 要置 True：它"匹配一切"，所以不能拿它来判断
+    # "这个模块我认识"。见 introspection 里挑选 hook 目标的逻辑。
+    is_fallback: bool = False
+
     def matches(self, module: nn.Module) -> bool: ...
 
     def describe(self, module: nn.Module, ctx: "DescribeContext") -> LayerView: ...
+
+    def role(self, module: nn.Module) -> Role:
+        """只回答"这个模块扮演什么角色"，不构造绘制内容。
+
+        别小看这条捷径：Tracer 每跑一次前向就要对每个叶子模块问一次角色，
+        如果一律走 `describe()`，KAN 那种要算曲线（每层上百条 × 48 个采样点）
+        的 adapter 会在每帧白算两遍。角色一般只看类型就能定，代价是常数级。
+        """
+        ...
 
 
 @dataclass
@@ -175,6 +188,24 @@ class Registry:
                 return adapter
         return None
 
+    def recognizes(self, module: nn.Module) -> bool:
+        """这个模块有没有**专用** adapter（而不是被兜底规则认领）。
+
+        用来决定 hook 该挂在哪一层，见 introspection._select_hook_targets。
+        """
+        adapter = self.resolve(module)
+        return adapter is not None and not getattr(adapter, "is_fallback", False)
+
+    def role_of(self, module: nn.Module) -> Role:
+        """廉价地判断模块角色（见 LayerAdapter.role 的说明）。"""
+        adapter = self.resolve(module)
+        if adapter is None:
+            return Role.IGNORE
+        try:
+            return adapter.role(module)
+        except Exception:
+            return Role.IGNORE
+
     def describe(self, module: nn.Module, ctx: DescribeContext) -> LayerView:
         """解析并描述一个模块。认不出来就返回 Opaque 降级，不抛异常。"""
         adapter = self.resolve(module)
@@ -194,12 +225,18 @@ class Registry:
             )
 
 
-def default_registry() -> Registry:
+def default_adapter_registry() -> Registry:
     """构建内置 adapter 的注册表。
 
-    P1 只有 Linear 系和几个常见的逐元素层；KAN / 多项式在 P3 加进来
-    （它们的 priority 更高，会自然覆盖这里的通用规则）。
+    名字里带 `adapter` 是刻意的：`playground.registry` 里也有一个
+    `default_registry()`，返回的是**模型**注册表。两个同名函数返回完全不同的东西，
+    已经误导过一次了（测试里 import 错、报了个看不懂的 AttributeError）。
+
+    注册顺序不重要 —— `Registry.register` 按 priority 降序排。
+    专用的 adapter（KAN）priority 更高，会自然覆盖通用规则；
+    兜底的 OpaqueFallbackAdapter priority 最低，只在没人认领时生效。
     """
+    from .kan import KANLinearAdapter
     from .linear import (
         ElementwiseAdapter,
         LinearAdapter,
@@ -207,6 +244,7 @@ def default_registry() -> Registry:
     )
 
     registry = Registry()
+    registry.register(KANLinearAdapter())
     registry.register(LinearAdapter())
     registry.register(ElementwiseAdapter())
     registry.register(OpaqueFallbackAdapter())

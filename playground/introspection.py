@@ -79,9 +79,7 @@ class Tracer:
 
     def __enter__(self) -> "Tracer":
         self.records = []
-        for name, module in self.model.named_modules():
-            if name == "" or any(True for _ in module.children()):
-                continue
+        for name, module in _select_hook_targets(self.model, self.registry):
             self._handles.append(module.register_forward_hook(self._hook(name)))
         return self
 
@@ -98,12 +96,43 @@ class Tracer:
                 return
             if not isinstance(output, torch.Tensor):
                 return
-            view = self.registry.describe(module, DescribeContext())
-            self.records.append(
-                TraceRecord(name, module, inputs[0], output, view.role)
-            )
+            # 用 role_of 而不是 describe：只需要知道角色，不该为每个模块
+            # 构造一遍绘制内容（KAN 那种要算上百条曲线的会很贵）。
+            role = self.registry.role_of(module)
+            self.records.append(TraceRecord(name, module, inputs[0], output, role))
 
         return hook
+
+
+def _select_hook_targets(model: nn.Module, registry: Registry) -> list[tuple[str, nn.Module]]:
+    """挑选要挂 forward hook 的模块。
+
+    规则：**能匹配到专用 adapter 的模块就地挂钩，不再往下走**；
+    认不出来的模块，有子模块就继续下潜（当容器看待），没有就自己挂钩（当叶子看待）。
+
+    这里的关键是判据用"认不认识"而不是"有没有子模块"。曾经用后者，
+    结果 `KANLinear` 因为内部有个 `self.base_activation = nn.SiLU()` 而被当成容器跳过，
+    只记录到它内部的 SiLU —— 整个 KAN 层在图上消失了。
+
+    反过来，`nn.Sequential` 这类纯容器会被"认不认识"这一条正确地区分出来：
+    它匹配不到专用 adapter，于是继续下潜到里面的 Linear / 激活层。
+    """
+    targets: list[tuple[str, nn.Module]] = []
+
+    def visit(module: nn.Module, name: str) -> None:
+        if name and registry.recognizes(module):
+            targets.append((name, module))
+            return
+        children = list(module.named_children())
+        if not children:
+            if name:
+                targets.append((name, module))
+            return
+        for child_name, child in children:
+            visit(child, f"{name}.{child_name}" if name else child_name)
+
+    visit(model, "")
+    return targets
 
 
 def _find_consumer(records: list[TraceRecord], start: int, tensor: torch.Tensor) -> int | None:
@@ -247,7 +276,12 @@ def build_graph(
         record = records[record_index]
         view = registry.describe(
             record.module,
-            DescribeContext(dead_masks=dead_lookup(record.module) if dead_lookup else {}),
+            DescribeContext(
+                # 这一层输入的实测范围。KAN 之类需要"按定义域画曲线"的 adapter 用得上，
+                # 而且正好能暴露"数据跑出了 spline 网格"这个静默失效的情况。
+                input_range=_range_of(record.input),
+                dead_masks=dead_lookup(record.module) if dead_lookup else {},
+            ),
         )
 
         # 这一列显示的数值：从权重层出发，沿着逐元素层走到链尾

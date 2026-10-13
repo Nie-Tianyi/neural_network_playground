@@ -55,6 +55,9 @@ class LinearAdapter:
     def matches(self, module: nn.Module) -> bool:
         return isinstance(module, nn.Linear)
 
+    def role(self, module: nn.Module) -> Role:
+        return Role.WEIGHT
+
     def describe(self, module: nn.Linear, ctx: DescribeContext) -> LayerView:
         weight = module.weight.detach().to("cpu")
         dead = ctx.dead_masks.get("weight")
@@ -92,6 +95,9 @@ class ElementwiseAdapter:
     def matches(self, module: nn.Module) -> bool:
         return isinstance(module, _ELEMENTWISE_TYPES)
 
+    def role(self, module: nn.Module) -> Role:
+        return Role.ELEMENTWISE
+
     def describe(self, module: nn.Module, ctx: DescribeContext) -> LayerView:
         return LayerView(
             role=Role.ELEMENTWISE,
@@ -116,9 +122,14 @@ class OpaqueFallbackAdapter:
 
     name = "opaque"
     priority = 0
+    is_fallback = True
 
     def matches(self, module: nn.Module) -> bool:
         return True
+
+    def role(self, module: nn.Module) -> Role:
+        # 兜底判角色只需要看参数形状，不用构造边，直接复用 describe 的结论即可
+        return self.describe(module, DescribeContext()).role
 
     def describe(self, module: nn.Module, ctx: DescribeContext) -> LayerView:
         name = type(module).__name__

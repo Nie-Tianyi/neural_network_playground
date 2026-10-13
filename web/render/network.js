@@ -17,6 +17,12 @@ const VERTICAL_STEP = RECT_SIZE + 25; // 55
 const INPUT_X = 65;
 const LABEL_FONT = 13;
 
+// 边函数曲线（KAN）的迷你图尺寸区间。实际尺寸按列间距和这一层的边数自适应 ——
+// 定死尺寸试过，34×22 在宽屏上小得根本看不出是条函数曲线，
+// 而那个尺寸本来就是整个 KAN 可视化的意义所在。
+const SPARKLINE_MIN_WIDTH = 34;
+const SPARKLINE_MAX_WIDTH = 68;
+
 /** 把 "X_1^2" 这类标签拆成 普通/下标/上标 三段，用 tspan 渲染。 */
 function labelParts(label) {
   const parts = [];
@@ -93,6 +99,7 @@ export class NetworkRenderer {
 
     this.updateLinks(graph);
     this.drawHeatmaps(heatmaps);
+    this.drawEdgeCurves(graph);
   }
 
   /**
@@ -313,6 +320,137 @@ export class NetworkRenderer {
       });
     });
   }
+
+  /**
+   * 画「边是一个函数」的那些结构（KAN）的函数曲线。
+   *
+   * 位置选在连线的中点：连线是一条对称的 S 形贝塞尔，它的中点**正好**是
+   * 两端节点的中点，所以直接取 (src+dst)/2 即可，不用去解贝塞尔方程。
+   *
+   * 画在 canvas 覆盖层上（它已经在 SVG 之上、且 pointer-events: none），
+   * 所以既能盖住连线、又不影响连线上的悬停命中。
+   */
+  drawEdgeCurves(graph) {
+    graph.edges.forEach((edges, layerIndex) => {
+      if (!edges.some((edge) => edge.payload.kind === "curve")) return;
+
+      const from = this.layout.columns[layerIndex];
+      const to = this.layout.columns[layerIndex + 1];
+      const maxImportance = Math.max(...edges.map((e) => e.payload.importance ?? 0), 1e-9);
+      const scale = curveScale(edges);
+      const size = this.sparklineSize(from.cx, to.cx);
+
+      // 按重要性升序画：重叠时重要的曲线压在上面，不会被次要的盖掉
+      for (const edge of [...edges].sort((a, b) => a.payload.importance - b.payload.importance)) {
+        const src = from.nodes[edge.src];
+        const dst = to.nodes[edge.dst];
+        drawSparkline(
+          this.ctx,
+          edge.payload,
+          (src.cx + dst.cx) / 2,
+          (src.cy + dst.cy) / 2,
+          size.width,
+          size.height,
+          scale,
+          edge.payload.importance / maxImportance,
+        );
+      }
+    });
+  }
+
+  /**
+   * 迷你曲线图该画多大。
+   *
+   * 横向可以奢侈一点（两列之间空档很宽），纵向必须抠。关键约束**不是**
+   * 节点间距 55，而是两条边的中点之间能有多近：
+   * 源节点在 `a + i·55`、目标节点在 `b + j·55`，中点就落在
+   * `(a+b)/2 + (i+j)·27.5` —— 因为 i+j 是整数，**相邻中点永远差 27.5**，
+   * 和两边各有多少节点无关。
+   *
+   * 所以高度必须小于 27.5。按 55 去算的话，8 个盒子会糊成一整块白板，
+   * 反而把网络结构盖住 —— 这个坑踩过一次了。
+   */
+  sparklineSize(fromCx, toCx) {
+    const gap = Math.max(toCx - fromCx, SPARKLINE_MIN_WIDTH);
+    const width = Math.max(SPARKLINE_MIN_WIDTH, Math.min(SPARKLINE_MAX_WIDTH, gap * 0.42));
+    // 高度用满 27.5 的间距：描白边的画法下，相邻曲线轻微相切也能分辨，
+    // 而矮一档就看不出函数形状了 —— 形状才是这里要传达的信息。
+    const height = Math.max(16, Math.min(width * 0.55, (VERTICAL_STEP / 2) * 0.95));
+    return { width, height };
+  }
+}
+
+/**
+ * 整层共用一个纵向标度，这样边与边之间的**相对幅度**是可见的。
+ *
+ * 如果每条曲线各自归一化，一个几乎为零的边看起来也会和主导边一样"有形状"，
+ * 那是最容易误导人的画法。共用一个标度则"平直的线"就真的是平的 ——
+ * 配合透明度编码的重要性，"又平又淡"就准确表达了"这条边没在干活"。
+ */
+function curveScale(edges) {
+  let max = 0;
+  for (const edge of edges) {
+    for (const value of edge.payload.ys) {
+      const magnitude = Math.abs(value);
+      if (magnitude > max) max = magnitude;
+    }
+  }
+  return max > 1e-6 ? max : 1;
+}
+
+function drawSparkline(ctx, payload, cx, cy, width, height, scale, normalizedImportance) {
+  const ys = payload.ys;
+  if (!ys || ys.length < 2) return;
+
+  const x0 = cx - width / 2;
+  const y0 = cy - height / 2;
+  const halfHeight = height / 2;
+  const toY = (value) => cy - (value / scale) * halfHeight * 0.92;
+
+  // 参考实现的做法：**透明度**编码重要性，线宽保持不变。
+  // tanh 在 0..1 中段更陡，让中等重要性的边也能拉开差距。
+  const alpha = 0.25 + 0.75 * Math.tanh(3 * normalizedImportance);
+
+  const tracePath = () => {
+    ctx.beginPath();
+    for (let i = 0; i < ys.length; i++) {
+      const px = x0 + (i / (ys.length - 1)) * width;
+      const py = Math.max(y0 + 1, Math.min(y0 + height - 1, toY(ys[i])));
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+  };
+
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  // φ = 0 的基准线：判断这条边整体偏正还是偏负
+  ctx.globalAlpha = alpha * 0.3;
+  ctx.strokeStyle = "#183D4E";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x0, cy);
+  ctx.lineTo(x0 + width, cy);
+  ctx.stroke();
+
+  // 先描一层白色粗边，再在上面画曲线。
+  //
+  // 一开始这里画的是白底方框，结果一层 8 条边的小方框会连成一整块白板，
+  // 把网络结构整个盖住 —— 而连线本身也是有用的信息（它说明哪条边连向哪个节点）。
+  // 描白边只压住曲线自己那一圈，两者都能看清。
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "rgba(255,255,255,0.92)";
+  ctx.lineWidth = 3.6;
+  tracePath();
+  ctx.stroke();
+
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = "#183D4E";
+  ctx.lineWidth = 1.7;
+  tracePath();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function structureSignature(graph) {

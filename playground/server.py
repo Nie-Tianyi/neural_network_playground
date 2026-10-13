@@ -95,7 +95,7 @@ class Session:
     # --- 生命周期 -----------------------------------------------------------
 
     async def configure(self, payload: dict) -> None:
-        cfg = _config_from_payload(payload, self.engine.cfg)
+        cfg = _config_from_payload(payload, self.engine.cfg, self.registry)
         self.engine.configure(cfg)
 
     def reload_models(self) -> None:
@@ -194,13 +194,50 @@ _FIELDS: dict[str, tuple[str, type | tuple[type, ...]]] = {
 }
 
 
-def _config_from_payload(payload: dict, current: Config | None) -> Config:
+def _model_defaults(spec) -> dict:
+    """把模型自带的建议超参翻译成 Config 的字段名。
+
+    `spec.defaults` 用的是前端那套 camelCase 名字（和客户端发过来的一致），
+    所以复用同一张 `_FIELDS` 映射表 —— 两处名字必须对齐，共用一张表就不会走岔。
+    """
+    defaults: dict = {}
+    for wire_name, value in spec.defaults.items():
+        entry = _FIELDS.get(wire_name)
+        if entry is None or isinstance(value, bool):
+            continue  # 含内部字段（如 _file）和未知键
+        field_name, expected = entry
+        if isinstance(value, expected):
+            defaults[field_name] = value
+    return defaults
+
+
+def _config_from_payload(
+    payload: dict,
+    current: Config | None,
+    registry: ModelRegistry | None = None,
+) -> Config:
     """把前端发来的字段合并进当前配置。
 
     只认识的字段才合并，而且类型对不上就忽略 —— 前端多发字段、发错类型
     都不该让整条连接断掉。
     """
     base = current or Config()
+
+    # 换模型时把它建议的超参一起带上（KAN 需要 adam + 更小的学习率，
+    # 用 MLP 的默认 SGD/0.03 基本学不动）。放在服务端做而不是只靠前端，
+    # 是因为 `?model=kan` 这种 URL 直接进来的路径也要生效 ——
+    # 否则分享出去的链接会给别人一套错误的超参。
+    if "model" in payload and isinstance(payload["model"], str) and payload["model"] != base.model:
+        if registry is not None:
+            spec = registry.get(payload["model"])
+            if spec is not None:
+                base = base.replace(
+                    **{
+                        field: value
+                        for field, value in _model_defaults(spec).items()
+                    }
+                )
+
     kwargs: dict = {}
 
     for wire_name, (field_name, expected) in _FIELDS.items():

@@ -12,7 +12,7 @@ from .base import (
     ProductInteraction,
     Registry,
     ScalarWeight,
-    default_registry,
+    default_adapter_registry,
 )
 
 __all__ = [
@@ -23,5 +23,5 @@ __all__ = [
     "ProductInteraction",
     "Registry",
     "ScalarWeight",
-    "default_registry",
+    "default_adapter_registry",
 ]

@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
-from .adapters.base import default_registry
+from .adapters.base import default_adapter_registry
 from .config import Config
 from .datasets import (
     DENSITY,
@@ -69,7 +69,7 @@ class Engine:
 
     def __init__(self, registry: ModelRegistry) -> None:
         self.registry = registry
-        self.adapters = default_registry()
+        self.adapters = default_adapter_registry()
 
         self.cfg: Config | None = None
         self.model: torch.nn.Module | None = None
@@ -173,7 +173,43 @@ class Engine:
         self._dead = {id(p): torch.zeros_like(p, dtype=torch.bool) for p, _ in self._regularized()}
         self.iter = 0
         self._reset_count += 1
+
+        # 训练开始前先把「定义域会漂移的层」的网格对齐到真实数据。
+        # 对 KAN 是**必须**的：默认网格是 [-1,1] 而 Playground 数据在 [-6,6]，
+        # 不先对齐的话 spline 分支全程恒为 0，你看到的是个"假 KAN"。
+        if self.train is not None:
+            self._refresh_grids(self.train.features)
+
         self.losses = self.evaluate()
+
+    # --- 定义域对齐（KAN 等）-------------------------------------------------
+
+    def _refresh_grids(self, x: Tensor) -> None:
+        """把实现了 `update_grid` 的层的网格重新对齐到当前数据分布。
+
+        钩子名 `update_grid` 是约定好的（见 layers.py 的模块文档）。
+        用 forward pre-hook 来投递"该层自己的输入"是刻意的 ——
+        逐层手工传下去的话，第二层的输入必须用第一层**更新后**的网格算出来，
+        否则对齐是错的。pre-hook 天然满足这个顺序：
+        L1 更新网格 → L1 前向（用新网格）→ L2 更新网格 → L2 前向 → …
+        和参考实现的 `for layer: layer.update_grid(x); x = layer(x)` 一致。
+        """
+        if self.model is None:
+            return
+        targets = [m for m in self.model.modules() if callable(getattr(m, "update_grid", None))]
+        if not targets:
+            return
+
+        handles = [m.register_forward_pre_hook(_update_grid_hook) for m in targets]
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            with torch.no_grad():
+                self.model(x)
+        finally:
+            for handle in handles:
+                handle.remove()
+            self.model.train(was_training)
 
     def _init_seed(self) -> int:
         """从配置派生一个稳定的整数种子。
@@ -226,6 +262,13 @@ class Engine:
                 self._kill_crossed_links()
 
         self.iter += 1
+
+        # 激活值会随训练漂移，定期把网格重新对齐 —— 否则 spline 分支
+        # 会慢慢失效，而图上完全看不出来（φ 只是悄悄变回 silu）。
+        every = self.cfg.grid_update_every
+        if every > 0 and self.iter % every == 0:
+            self._refresh_grids(x)
+
         self.losses = self.evaluate()
 
     def _regularized(self) -> list[tuple[Tensor, str]]:
@@ -373,6 +416,20 @@ class Engine:
             "heatmaps": heatmaps,
         }
         return graph, payload
+
+
+def _update_grid_hook(module: torch.nn.Module, args: tuple) -> None:
+    """给实现了 `update_grid` 的层投递它自己的输入。
+
+    输入可能带着前导维度（用户模型可能先做了 reshape），统一压成
+    (batch, features) 再交给层 —— update_grid 只认这个形状。
+    """
+    if not args or not isinstance(args[0], Tensor):
+        return
+    x = args[0].detach()
+    if x.dim() < 2:
+        return
+    module.update_grid(x.reshape(-1, x.shape[-1]))
 
 
 # --- 张量 → 网格 -------------------------------------------------------------

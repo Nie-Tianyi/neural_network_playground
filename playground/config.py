@@ -87,6 +87,11 @@ class Config:
     optimizer: str = "sgd"  # sgd | momentum | adam
     batch_size: int = 10
 
+    # 每隔多少个 epoch 把「定义域会漂移的层」的网格重新对齐到当前数据分布。
+    # 目前只有 KAN 需要（见 layers.KANLinear.update_grid）：不做这件事的话，
+    # 激活值漂移出 spline 网格后 φ 会静默退化成 silu。0 = 关闭。
+    grid_update_every: int = 20
+
     # 运行
     device: str = "cpu"
 
@@ -129,4 +134,5 @@ class Config:
             "optimizer": self.optimizer,
             "batchSize": self.batch_size,
             "networkShape": list(self.network_shape),
+            "gridUpdateEvery": self.grid_update_every,
         }
