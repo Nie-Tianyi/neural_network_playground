@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -46,14 +47,14 @@ class ModelSpec:
         return self.cls(in_dim, out_dim, cfg)
 
 
-def register(
+def register[ModelT: nn.Module](
     key: str,
     title: str | None = None,
     description: str = "",
     problem: str | None = None,
     configurable_shape: bool = False,
     defaults: dict[str, Any] | None = None,
-):
+) -> Callable[[type[ModelT]], type[ModelT]]:
     """把一个 nn.Module 注册成前端可选模型。
 
     用法::
@@ -67,9 +68,20 @@ def register(
         in_dim  —— 输入特征数（等于当前勾选的特征个数）
         out_dim —— 输出维度，分类/回归都是 1
         cfg     —— Config 对象，模型从中读取激活函数、正则等
+
+    ## 返回类型为什么必须是泛型
+
+    装饰器要返回**原来那个类**（`type[ModelT]`）而不是 `type[nn.Module]`。
+    写成后者的话，类型检查器（Pylance / pyright）会认为被装饰的类退化成了一个
+    裸的 `nn.Module` —— 于是模型自己的属性一律报错：
+
+        model.layers[0]   # "__getitem__" not defined on type "Module"
+        model.net[0]      # 同上
+
+    这是在给测试补类型检查时发现的，**用户在自己 models.py 里写的模型同样会中招**。
     """
 
-    def decorator(cls: type[nn.Module]) -> type[nn.Module]:
+    def decorator(cls: type[ModelT]) -> type[ModelT]:
         setattr(
             cls,
             MARKER,

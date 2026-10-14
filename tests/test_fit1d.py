@@ -26,6 +26,7 @@ from playground.datasets import (
 )
 from playground.engine import Engine
 from playground.registry import default_registry
+from tests.helpers import cfg_of
 
 FIT_DATASETS = [d for d, spec in DATASETS.items() if spec.is_1d]
 
@@ -53,7 +54,7 @@ def test_1d_points_follow_the_target_function(dataset_id: str) -> None:
     for point in split.train + split.test:
         assert spec.domain[0] <= point.x <= spec.domain[1]
         assert point.y == 0.0  # 一维数据没有第二个坐标
-        assert point.label == pytest.approx(spec.truth(point.x), abs=1e-9)
+        assert point.label == pytest.approx(spec.target(point.x), abs=1e-9)
 
 
 def test_1d_noise_only_jitters_the_label() -> None:
@@ -83,7 +84,7 @@ def test_1d_noise_shrinks_toward_the_clean_function() -> None:
         spec = DATASETS["fit-sin"]
         split = generate("fit-sin", noise=noise, perc_train=50.0, seed=3.0)
         points = split.train + split.test
-        return sum(abs(p.label - spec.truth(p.x)) for p in points) / len(points)
+        return sum(abs(p.label - spec.target(p.x)) for p in points) / len(points)
 
     assert mean_deviation(0.0) < 1e-9
     assert mean_deviation(0.05) < mean_deviation(0.3)
@@ -114,10 +115,10 @@ def test_switching_to_1d_clamps_the_features(registry) -> None:
     """
     engine = Engine(registry)
     engine.configure(Config(dataset="circle", features=("x", "y", "xSquared")))
-    assert engine.cfg.features == ("x", "y", "xSquared")
+    assert cfg_of(engine).features == ("x", "y", "xSquared")
 
-    engine.configure(engine.cfg.replace(dataset="fit-cubic"))
-    assert engine.cfg.features == ("x",)
+    engine.configure(cfg_of(engine).replace(dataset="fit-cubic"))
+    assert cfg_of(engine).features == ("x",)
 
 
 def test_switching_back_to_2d_keeps_working(registry) -> None:
@@ -126,7 +127,7 @@ def test_switching_back_to_2d_keeps_working(registry) -> None:
     engine.configure(Config(model="mlp", dataset="fit-sin"))
     engine.step()
 
-    engine.configure(engine.cfg.replace(dataset="circle"))
+    engine.configure(cfg_of(engine).replace(dataset="circle"))
     for _ in range(20):
         engine.step()
     assert engine.iter == 20

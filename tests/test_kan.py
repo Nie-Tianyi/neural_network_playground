@@ -26,6 +26,7 @@ from playground.config import Config
 from playground.engine import Engine
 from playground.layers import KANLinear
 from playground.registry import default_registry
+from tests.helpers import kan_layer_of
 
 # --- 层本身 ------------------------------------------------------------------
 
@@ -117,6 +118,7 @@ def test_kan_can_fit_a_function() -> None:
     target = torch.sin(x)
 
     optimizer = torch.optim.Adam(layer.parameters(), lr=1e-2)
+    loss = torch.tensor(float("inf"))  # 循环里赋值，这里先给个初值
     for step in range(1500):
         optimizer.zero_grad()
         loss = ((layer(x) - target) ** 2).mean()
@@ -163,6 +165,8 @@ def test_adapter_produces_curve_payloads() -> None:
     view = adapter.describe(layer, DescribeContext(input_range=(-2.0, 2.0)))
     assert view.kind == "kan"
     assert view.width == 3
+    # edges 声明成 Optional 是为了表达"这一层没有可画的边"（比如认不出的层）
+    assert view.edges is not None
     assert len(view.edges) == 2 * 3  # 行优先 (out, in)
 
     edge = view.edges[0]
@@ -179,8 +183,9 @@ def test_adapter_takes_priority_over_the_fallback() -> None:
     adapters = default_adapter_registry()
     layer = KANLinear(2, 2, grid_size=5, spline_order=3)
 
-    assert adapters.resolve(layer) is not None
-    assert adapters.resolve(layer).name == "kan"
+    resolved = adapters.resolve(layer)
+    assert resolved is not None
+    assert resolved.name == "kan"
     assert adapters.recognizes(layer)
 
 
@@ -225,7 +230,7 @@ def test_engine_aligns_the_spline_grid_before_training(registry) -> None:
     engine = Engine(registry)
     engine.configure(Config(model="kan", dataset="circle", features=("x", "y"), network_shape=(3,)))
 
-    layer = engine.model.layers[0]
+    layer = kan_layer_of(engine)
     assert float(layer.grid.min()) < -4.0
     assert float(layer.grid.max()) > 4.0
 
@@ -243,12 +248,12 @@ def test_engine_keeps_the_grid_aligned_during_training(registry) -> None:
         )
     )
     # 模拟"激活漂移出网格"：把网格整体挪到远离数据的地方
-    engine.model.layers[0].grid.add_(500.0)
+    kan_layer_of(engine).grid.add_(500.0)
     for _ in range(10):
         engine.step()
 
     # 跑满一个 grid_update_every 之后必须被拉回数据范围附近
-    assert float(engine.model.layers[0].grid.abs().max()) < 100
+    assert float(kan_layer_of(engine).grid.abs().max()) < 100
 
 
 def test_grid_update_can_be_disabled(registry) -> None:
@@ -262,11 +267,11 @@ def test_grid_update_can_be_disabled(registry) -> None:
             grid_update_every=0,
         )
     )
-    engine.model.layers[0].grid.add_(500.0)
+    kan_layer_of(engine).grid.add_(500.0)
     for _ in range(30):
         engine.step()
 
-    assert float(engine.model.layers[0].grid.abs().max()) > 400  # 没被动过
+    assert float(kan_layer_of(engine).grid.abs().max()) > 400  # 没被动过
 
 
 def test_kan_graph_has_curve_edges(registry) -> None:

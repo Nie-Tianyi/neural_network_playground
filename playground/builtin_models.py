@@ -44,6 +44,11 @@ class MLP(nn.Module):
     所以前端的加层/加神经元按钮对它有效。空元组 = 没有隐藏层（纯线性模型）。
     """
 
+    # 类级标注：`self.net = nn.Sequential(...)` 是动态挂属性，类型检查器
+    # 只能从 nn.Module.__getattr__ 推断，于是 model.net[0] 会假报
+    # "__getitem__ not defined on Module"。理由同 layers.KANLinear。
+    net: nn.Sequential
+
     def __init__(self, in_dim: int, out_dim: int, cfg) -> None:
         super().__init__()
         shape = list(cfg.network_shape)
@@ -87,6 +92,9 @@ class KAN(nn.Module):
     输出层仍然接一个激活（分类是 tanh），和 MLP 保持一致 ——
     否则两者的输出值域不同，决策边界和 loss 就没法直接对比了。
     """
+
+    layers: nn.ModuleList
+    output_activation: nn.Module
 
     def __init__(self, in_dim: int, out_dim: int, cfg) -> None:
         super().__init__()

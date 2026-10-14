@@ -316,6 +316,18 @@ class DatasetSpec:
     def is_1d(self) -> bool:
         return self.mode == "1d"
 
+    @property
+    def target(self) -> Callable[[float], float]:
+        """一维数据集的目标函数 f(x)。
+
+        `truth` 声明成 Optional 是因为二维数据集确实没有目标函数，
+        但**一维的必然有** —— 所以调用方（画参考线的服务端、做数值断言的测试）
+        每次都要写一句 `assert spec.truth is not None` 很啰嗦。
+        这里收成一个非 Optional 的入口，断言只写一遍。
+        """
+        assert self.truth is not None, f"{self.id} 是一维数据集，必须有 truth"
+        return self.truth
+
 
 DATASETS: dict[str, DatasetSpec] = {
     spec.id: spec

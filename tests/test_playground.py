@@ -15,11 +15,13 @@ import pytest
 import torch
 from torch import nn
 
+from playground.adapters.base import ScalarWeight
 from playground.config import Config
 from playground.datasets import DATASETS, FEATURES, generate
 from playground.engine import Engine
 from playground.introspection import build_graph
 from playground.registry import ModelRegistry, default_registry
+from tests.helpers import cfg_of, mlp_head_of, model_of
 
 
 @pytest.fixture(scope="module")
@@ -51,7 +53,7 @@ def test_dataset_structural_invariants(dataset_id: str) -> None:
         for p in points:
             assert spec.domain[0] <= p.x <= spec.domain[1]
             assert p.y == 0.0
-            assert p.label == pytest.approx(spec.truth(p.x), abs=1e-9)
+            assert p.label == pytest.approx(spec.target(p.x), abs=1e-9)
         return
 
     if spec.problem == "classification":
@@ -215,10 +217,10 @@ def test_reset_gives_a_fresh_initialization(registry: ModelRegistry) -> None:
     """Reset 按钮必须换一套新的随机权重，否则这个按钮没有意义。"""
     engine = Engine(registry)
     engine.configure(Config(features=("x", "y")))
-    before = [p.detach().clone() for p in engine.model.parameters()]
+    before = [p.detach().clone() for p in model_of(engine, nn.Module).parameters()]
 
     engine.reset()
-    after = [p.detach().clone() for p in engine.model.parameters()]
+    after = [p.detach().clone() for p in model_of(engine, nn.Module).parameters()]
 
     assert any(not torch.equal(a, b) for a, b in zip(before, after, strict=True))
     assert engine.iter == 0
@@ -256,7 +258,12 @@ def test_l1_prunes_more_aggressively_as_rate_grows(registry: ModelRegistry) -> N
         for _ in range(120):
             engine.step()
         graph, _ = engine.snapshot()
-        return sum(1 for layer in graph.edges for edge in layer if edge.payload.dead)
+        return sum(
+            1
+            for layer in graph.edges
+            for edge in layer
+            if isinstance(edge.payload, ScalarWeight) and edge.payload.dead
+        )
 
     assert dead_count(0.0) == 0
     assert dead_count(0.003) > 0
@@ -278,7 +285,11 @@ def test_l2_does_not_kill_links(registry: ModelRegistry) -> None:
     for _ in range(60):
         engine.step()
     graph, _ = engine.snapshot()
-    assert not any(edge.payload.dead for layer in graph.edges for edge in layer)
+    assert not any(
+        isinstance(edge.payload, ScalarWeight) and edge.payload.dead
+        for layer in graph.edges
+        for edge in layer
+    )
 
 
 # --- 内省：图结构 ------------------------------------------------------------
@@ -364,9 +375,10 @@ def test_edges_follow_feature_order_not_display_order(registry: ModelRegistry) -
     # 真正要盯的是"权重有没有跟着特征走"：模型第一列是 y，
     # 那么 dst=0 上 src=显示下标1（也就是 X_2）的那条边，
     # 应该拿到 linear.weight[0][0]
-    head = engine.model.net[0]
+    head = mlp_head_of(engine)
     weight = head.weight.detach()
     for edge in first:
+        assert isinstance(edge.payload, ScalarWeight)  # Linear 的边一定是标量权重
         expected = float(weight[edge.dst][0 if edge.src == 1 else 1])
         assert edge.payload.value == pytest.approx(expected, abs=1e-6)
 
@@ -413,7 +425,7 @@ def test_node_activation_comes_after_the_activation_function(registry: ModelRegi
     engine = Engine(registry)
     engine.configure(Config(features=("x", "y"), activation="tanh", network_shape=(2,)))
     with torch.no_grad():
-        head = engine.model.net[0]
+        head = mlp_head_of(engine)
         head.bias.fill_(5.0)
         head.weight.zero_()
 
@@ -501,7 +513,7 @@ def test_learning_rate_change_keeps_progress(registry: ModelRegistry) -> None:
         engine.step()
     assert engine.iter == 20
 
-    engine.configure(engine.cfg.replace(learning_rate=0.1))
+    engine.configure(cfg_of(engine).replace(learning_rate=0.1))
     assert engine.iter == 20  # 迭代数保留
 
 
@@ -511,7 +523,7 @@ def test_dataset_change_regenerates(registry: ModelRegistry) -> None:
     for _ in range(20):
         engine.step()
 
-    engine.configure(engine.cfg.replace(dataset="spiral"))
+    engine.configure(cfg_of(engine).replace(dataset="spiral"))
     assert engine.iter == 0  # 换数据集必须重来
 
 
@@ -521,7 +533,7 @@ def test_feature_toggle_changes_input_width(registry: ModelRegistry) -> None:
     engine.configure(Config(features=("x", "y"), network_shape=(4,)))
     assert engine.snapshot()[0].columns[0].width == 7
 
-    engine.configure(engine.cfg.replace(features=("x", "y", "xTimesY", "sinX")))
+    engine.configure(cfg_of(engine).replace(features=("x", "y", "xTimesY", "sinX")))
     graph, _ = engine.snapshot()
     assert graph.columns[0].width == 7  # 列宽不变
     assert sum(n.active for n in graph.columns[0].nodes) == 4  # 4 个被打开
@@ -616,7 +628,7 @@ def test_build_graph_is_deterministic(registry: ModelRegistry) -> None:
     engine = Engine(registry)
     engine.configure(Config(features=("x", "y"), network_shape=(4, 4)))
 
-    model = engine.model
+    model = model_of(engine, nn.Module)
     grid = engine._grid_input()
     labels = ["X_1", "X_2", "X_1^2", "X_2^2", "X_1X_2", "sin(X_1)", "sin(X_2)"]
     # 必须是 list 不是 set：顺序有语义（对应模型输入列的顺序）

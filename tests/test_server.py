@@ -126,6 +126,7 @@ def test_switching_model_applies_its_suggested_hyperparameters() -> None:
     cfg = _config_from_payload({"model": "kan"}, Config(), registry)
 
     spec = registry.get("kan")
+    assert spec is not None, "内置模型表里应该有 kan"
     assert cfg.optimizer == spec.defaults["optimizer"]
     assert cfg.learning_rate == spec.defaults["learningRate"]
 

@@ -17,21 +17,34 @@ uv run ruff check .            # lint（配置在 pyproject.toml）
 npx pyright                    # 类型检查（读 pyproject.toml 的 [tool.pyright]）
 ```
 
-**类型检查**：`playground/` 是零 pyright 报错的，这条底线别破。`tests/` 被
-刻意排除在 pyright 之外（理由写在 `pyproject.toml` 的 `[tool.pyright]` 里）——
-测试天然要碰内部、构造坏对象、在多态 payload 上取具体字段，严格检查只会得到
-几十条类型收窄噪音。
+**类型检查**：**整个项目（含 `tests/`）是零 pyright 报错的**，这条底线别破。
 
-写 adapter / 层的类型标注时有两个坑，都在 `playground/adapters/base.py` 和
-`playground/layers.py` 里注明了：
+给 torch 代码写类型标注时有四个坑，都踩过并已修好，改动相关代码前先看一眼：
 
-- **注册的 buffer / parameter 要写类级标注**（`grid: Tensor`）。走
-  `register_buffer("grid", ...)` 的话类型检查器只能从 `nn.Module.__getattr__`
-  推断，得到 `Module | Tensor` 的联合类型，于是 `self.grid[:, k]` 会假报
-  "__getitem__ not defined on Module" —— 一报就是十几处。
+- **注册的 buffer / parameter、以及动态挂的属性要写类级标注**。走
+  `register_buffer("grid", ...)` 或 `self.net = nn.Sequential(...)` 的话，
+  类型检查器只能从 `nn.Module.__getattr__` 推断，得到 `Tensor | Module`
+  这种联合类型，于是 `self.grid[:, k]` / `model.net[0]` 会假报
+  "__getitem__ not defined on Module"。见 `layers.KANLinear` 和
+  `builtin_models` 里的类级声明。
+- **`@register` 装饰器必须是泛型的**（`def register[ModelT: nn.Module](...) -> Callable[[type[ModelT]], type[ModelT]]`）。
+  写成 `-> Callable[[type[nn.Module]], type[nn.Module]]` 会让类型检查器认为
+  被装饰的类退化成了裸 `nn.Module`，模型自己的属性全部报错 ——
+  **用户在自己 `models.py` 里写的模型同样会中招**。
 - **协议方法的参数不能收窄**。`LayerAdapter.describe` 声明收 `nn.Module`，
   实现里收 `nn.Linear` / `KANLinear` 会被判定不兼容（方法参数是逆变的）。
   签名收 `nn.Module`，函数开头用 `isinstance` 收窄。
+- **只读的序列用 `Sequence` 而不是 `list`**（`list` 是不变的）：
+  `LayerView.edges` 声明成 `list[EdgePayload]` 时，adapter 交
+  `list[ScalarWeight]` 会被判不兼容。
+
+测试里取模型/配置统一用 `tests/helpers.py` 的 `cfg_of` / `model_of` /
+`kan_layer_of` / `mlp_head_of`，别在用例里散落 `assert ... is not None`。
+
+⚠️ `model_of` 里有个反直觉的点：**运行期的类校验用的是注册表里的 `spec.cls`，
+不是传进来的 `kind`**。因为 `builtin_models.py` 是注册表用 `_exec_fresh`
+全新执行加载的，`from playground.builtin_models import KAN` 拿到的和注册表里的
+**不是同一个类对象**，`isinstance` 会失败（热重载机制的直接后果）。
 
 **ruff 的规则集是显式列在 `pyproject.toml` 里的**（`[tool.ruff.lint] select`），
 不是靠默认值 —— 默认集随 ruff 版本变，钉住才能保证"本地跑是绿的"和"以后跑还是绿的"
