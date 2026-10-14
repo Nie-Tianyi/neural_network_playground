@@ -82,6 +82,7 @@ class Session:
             "test": _encode_points(self.engine.test.points),
         }
         if spec.is_1d:
+            assert spec.truth is not None  # 一维数据集必须带目标函数，见 datasets.py
             # 拟合图要画"真实函数"作为参考线，前端算不了，这里一并送过去。
             x_axis = grid_line(spec.domain)
             message["gridX"] = serialize.encode_line(x_axis)

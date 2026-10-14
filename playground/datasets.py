@@ -424,7 +424,7 @@ def feature_matrix(xs: Tensor, ys: Tensor, feature_ids: tuple[str, ...] | list[s
     return torch.stack([FEATURE_TORCH[fid](xs, ys) for fid in feature_ids], dim=-1)
 
 
-def points_to_xy(points: list[Point]) -> tuple[Tensor, Tensor]:
+def points_to_xy(points: list[Point]) -> tuple[Tensor, Tensor, Tensor]:
     xs = torch.tensor([p.x for p in points], dtype=torch.float32)
     ys = torch.tensor([p.y for p in points], dtype=torch.float32)
     labels = torch.tensor([p.label for p in points], dtype=torch.float32).unsqueeze(-1)

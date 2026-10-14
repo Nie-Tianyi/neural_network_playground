@@ -29,6 +29,25 @@ dev = [
     "ruff>=0.17",
 ]
 
+[tool.pyright]
+# VS Code 的 Pylance 直接读这一段（它同时也读 pyrightconfig.json）。
+# 显式钉住，免得不同版本、不同机器上的默认值不一样。
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+include = ["playground", "main.py"]
+
+# tests/ 不参与类型检查。
+#
+# 原因：测试天然要去碰内部（`engine.model.net[0].weight`）、故意构造坏对象、
+# 在多态的 EdgePayload 上取某个具体分支才有的字段。而 `Engine.model` /
+# `Engine.cfg` 在 configure() 之前确实是 None，于是这类地方会产出几十条
+# "可能为 None"、"联合类型上没有这个属性" 的噪音 —— 没有一条是真错误，
+# 而且真有错的话跑一遍 pytest 就暴露了。
+#
+# playground/ 生产代码是**零 pyright 报错**的，这条底线由 CI/本地跑
+# `npx pyright` 保证。
+exclude = ["tests", ".venv", "**/__pycache__"]
+
 [tool.pytest.ini_options]
 # 这个项目不打包发布（`uv run main.py` 直接从仓库根目录跑），
 # 所以让 pytest 把根目录加进 sys.path 就行，不需要装成 package。

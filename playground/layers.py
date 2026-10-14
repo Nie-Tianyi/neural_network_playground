@@ -84,6 +84,17 @@ class KANLinear(nn.Module):
     把网格重排到真实的数据分位数上。
     """
 
+    # 这些属性的**类级标注不是装饰**：`register_buffer("grid", ...)` 和
+    # `self.xxx = nn.Parameter(...)` 都是动态挂属性，类型检查器（Pylance / mypy）
+    # 只能通过 `nn.Module.__getattr__` 去推断，得到的是 `Module | Tensor` 这种
+    # 联合类型 —— 于是 `self.grid[:, k]` 会假报 "__getitem__ not defined on Module"，
+    # 一报就是十几处。声明出来既消掉噪音，也让"这一层有哪些张量"一目了然。
+    grid: Tensor
+    base_weight: nn.Parameter
+    spline_weight: nn.Parameter
+    spline_scaler: nn.Parameter
+    base_activation: nn.Module
+
     def __init__(
         self,
         in_features: int,

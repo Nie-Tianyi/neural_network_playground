@@ -45,7 +45,10 @@ class KANLinearAdapter:
     def role(self, module: nn.Module) -> Role:
         return Role.WEIGHT
 
-    def describe(self, module: KANLinear, ctx: DescribeContext) -> LayerView:
+    def describe(self, module: nn.Module, ctx: DescribeContext) -> LayerView:
+        # 同 LinearAdapter：协议的参数是逆变的，签名必须收 nn.Module，
+        # 在这里再收窄。实际只会在 matches() 返回 True 之后被调用。
+        assert isinstance(module, KANLinear)
         explanation = module.explain(samples=self.SAMPLES)
 
         xs = explanation.xs.detach().to("cpu")

@@ -14,7 +14,24 @@ uv run pytest                  # 全部测试（约 3 分钟）
 uv run pytest -k "l1 or prune" # 按关键字筛选
 uv run pytest tests/test_playground.py::test_first_layer_edges_point_at_the_active_nodes  # 单个测试
 uv run ruff check .            # lint（配置在 pyproject.toml）
+npx pyright                    # 类型检查（读 pyproject.toml 的 [tool.pyright]）
 ```
+
+**类型检查**：`playground/` 是零 pyright 报错的，这条底线别破。`tests/` 被
+刻意排除在 pyright 之外（理由写在 `pyproject.toml` 的 `[tool.pyright]` 里）——
+测试天然要碰内部、构造坏对象、在多态 payload 上取具体字段，严格检查只会得到
+几十条类型收窄噪音。
+
+写 adapter / 层的类型标注时有两个坑，都在 `playground/adapters/base.py` 和
+`playground/layers.py` 里注明了：
+
+- **注册的 buffer / parameter 要写类级标注**（`grid: Tensor`）。走
+  `register_buffer("grid", ...)` 的话类型检查器只能从 `nn.Module.__getattr__`
+  推断，得到 `Module | Tensor` 的联合类型，于是 `self.grid[:, k]` 会假报
+  "__getitem__ not defined on Module" —— 一报就是十几处。
+- **协议方法的参数不能收窄**。`LayerAdapter.describe` 声明收 `nn.Module`，
+  实现里收 `nn.Linear` / `KANLinear` 会被判定不兼容（方法参数是逆变的）。
+  签名收 `nn.Module`，函数开头用 `isinstance` 收窄。
 
 **ruff 的规则集是显式列在 `pyproject.toml` 里的**（`[tool.ruff.lint] select`），
 不是靠默认值 —— 默认集随 ruff 版本变，钉住才能保证"本地跑是绿的"和"以后跑还是绿的"

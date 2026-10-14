@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -125,7 +126,10 @@ class LayerView:
 
     # 仅当 role == WEIGHT 时有意义
     width: int | None = None  # 这一列有几个节点（模块输出维度）
-    edges: list[EdgePayload] | None = None  # 长度 width*prev_width，行优先 (out, in)
+    # 只读，所以用协变的 Sequence 而不是 list：list 是不变的，
+    # adapter 交一个 list[ScalarWeight] 给 list[EdgePayload] 会被类型检查器
+    # 判为不兼容（Pylance / mypy 都会报）。
+    edges: Sequence[EdgePayload] | None = None  # 长度 width*prev_width，行优先 (out, in)
 
     # adapter 想额外告诉前端的东西（KAN 的 grid 范围、门控值……）
     extra: dict[str, Any] = field(default_factory=dict)
@@ -137,14 +141,26 @@ class LayerAdapter(Protocol):
 
     `priority` 大的先被尝试 —— 这样"更具体的 adapter"可以覆盖通用的那个，
     比如 KANLinear 应该优先于任何把 nn.Module 一网打尽的兜底 adapter。
+
+    ## 关于 `is_fallback`
+
+    兜底的 adapter（`OpaqueFallbackAdapter`）要把它置成 `True`：它"匹配一切"，
+    所以不能拿它来判断"这个模块我认识"。见 `Registry.recognizes`。
+
+    **它是可选的，刻意没有写进协议成员里**：运行时读的是
+    `getattr(adapter, "is_fallback", False)` —— 只有兜底那一个需要声明。
+    写进协议会让每个 adapter 都得加一行 `is_fallback = False` 的样板，
+    而且"必需"这个语义本身就是错的。
+
+    ## 关于 `describe` 的参数
+
+    协议要求"能描述**任意** nn.Module"，所以实现里的参数类型必须是 `nn.Module`
+    而不能收窄成具体的层 —— 方法参数是**逆变**的，收窄会让类型检查器
+    （PyCharm / mypy）判定不兼容。实现里在函数开头用 `isinstance` 收窄即可。
     """
 
     name: str
     priority: int
-
-    # 兜底的 adapter 要置 True：它"匹配一切"，所以不能拿它来判断
-    # "这个模块我认识"。见 introspection 里挑选 hook 目标的逻辑。
-    is_fallback: bool = False
 
     def matches(self, module: nn.Module) -> bool: ...
 

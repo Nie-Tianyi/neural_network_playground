@@ -25,7 +25,7 @@ Playground 里"神经元的输出"指的是 `activation(weighted_sum)`，
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -350,7 +350,7 @@ def _promote_width_changing(records: list[TraceRecord]) -> None:
 
 
 def _build_edges(
-    payloads: list[EdgePayload] | None,
+    payloads: Sequence[EdgePayload] | None,
     out_width: int,
     in_width: int,
     src_map: list[int] | None = None,

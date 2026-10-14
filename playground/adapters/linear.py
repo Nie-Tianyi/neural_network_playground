@@ -58,7 +58,11 @@ class LinearAdapter:
     def role(self, module: nn.Module) -> Role:
         return Role.WEIGHT
 
-    def describe(self, module: nn.Linear, ctx: DescribeContext) -> LayerView:
+    def describe(self, module: nn.Module, ctx: DescribeContext) -> LayerView:
+        # 签名收 nn.Module 而不是 nn.Linear：协议的参数是逆变的，收窄会让
+        # 类型检查器判定不兼容（见 LayerAdapter 的 docstring）。实际只会在
+        # matches() 返回 True 之后被调用，所以这里收窄是安全的。
+        assert isinstance(module, nn.Linear)
         weight = module.weight.detach().to("cpu")
         dead = ctx.dead_masks.get("weight")
         edges: list[ScalarWeight] = [

@@ -403,6 +403,7 @@ class Engine:
             )
 
     def _loss_on(self, batch: Batch | None) -> float:
+        assert self.model is not None
         if batch is None or len(batch) == 0:
             return 0.0
         out = self.model(batch.features)
@@ -510,7 +511,13 @@ def _update_grid_hook(module: torch.nn.Module, args: tuple) -> None:
     x = args[0].detach()
     if x.dim() < 2:
         return
-    module.update_grid(x.reshape(-1, x.shape[-1]))
+    # 用 getattr 而不是直接 module.update_grid：`update_grid` 是个**约定好的
+    # 名字**，nn.Module 上并不存在这个方法。直接调的话类型检查器会报
+    # "Module has no attribute"，而这里本来就是动态派发。
+    update_grid = getattr(module, "update_grid", None)
+    if update_grid is None:
+        return
+    update_grid(x.reshape(-1, x.shape[-1]))
 
 
 # --- 张量 → 网格 -------------------------------------------------------------
