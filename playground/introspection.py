@@ -25,17 +25,16 @@ Playground 里"神经元的输出"指的是 `activation(weighted_sum)`，
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Self
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from .adapters.base import (
     DescribeContext,
     EdgePayload,
-    LayerAdapter,
-    Opaque,
     Registry,
     Role,
 )
@@ -77,7 +76,7 @@ class Tracer:
         self.records: list[TraceRecord] = []
         self._handles: list[torch.utils.hooks.RemovableHandle] = []
 
-    def __enter__(self) -> "Tracer":
+    def __enter__(self) -> Self:
         self.records = []
         for name, module in _select_hook_targets(self.model, self.registry):
             self._handles.append(module.register_forward_hook(self._hook(name)))
@@ -227,7 +226,7 @@ def build_graph(
     active_inputs: list[int] | None,
     registry: Registry,
     input_grid: torch.Tensor | None = None,
-    dead_lookup: "Callable[[nn.Module], dict[str, torch.Tensor]] | None" = None,
+    dead_lookup: Callable[[nn.Module], dict[str, torch.Tensor]] | None = None,
 ) -> DisplayGraph:
     """跑一遍前向，把模型画成一张图。
 
@@ -245,9 +244,8 @@ def build_graph(
     `input_grid` 是全部特征在网格上的取值 (N, len(input_labels))，用来给那些
     **没被喂进模型**的特征也画热力图（它们的值不在前向传播的路径上，拿不到）。
     """
-    with torch.no_grad():
-        with Tracer(model, registry) as tracer:
-            model(x)
+    with torch.no_grad(), Tracer(model, registry) as tracer:
+        model(x)
 
     records = tracer.records
     if not records:

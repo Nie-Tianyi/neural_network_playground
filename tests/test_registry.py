@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
-import torch.nn as nn
+from torch import nn
 
 from playground.registry import ModelRegistry
 

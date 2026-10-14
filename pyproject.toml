@@ -26,6 +26,7 @@ torch = { index = "pytorch-cpu" }
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff>=0.17",
 ]
 
 [tool.pytest.ini_options]
@@ -33,3 +34,44 @@ dev = [
 # 所以让 pytest 把根目录加进 sys.path 就行，不需要装成 package。
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+# 显式列出来，不依赖 ruff 的默认集 —— 默认集随版本变，钉住才能保证
+# "本地跑是绿的"和"以后跑还是绿的"是同一件事。
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "UP",        # pyupgrade
+    "B", "BLE",  # flake8-bugbear / blind-except
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "RUF", "PLR", "PYI",
+    "S",         # bandit
+]
+
+ignore = [
+    # 中文注释里的全角标点（，、：（））会被当成"歧义 Unicode 字符"。
+    # 这是语言本身，不是问题。三条规则加起来误报一千多处。
+    "RUF001", "RUF002", "RUF003",
+    # assert 是这个项目表达内部不变量的主要方式（比如"网格点数
+    # 必须等于 density²"），不是用来做输入校验的。
+    "S101",
+    # 魔数正是重点：datasets.py / palette.js 里那些常量全部来自
+    # TensorFlow Playground 源码，注释里标了出处。
+    "PLR2004",
+    # 数据生成用的伪随机，不是密码学用途。
+    "S311",
+    # KANLinear 那种层的超参本来就多，拆成 dataclass 只会更难读。
+    "PLR0913", "PLR0917",
+    # 行宽交给 line-length 管，这里不重复报。
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# models.py 是给用户抄的模板，里面大量注释掉的示例代码。
+"playground/models.py" = ["E501"]

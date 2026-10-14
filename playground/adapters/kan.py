@@ -18,7 +18,7 @@ MLP 的一条边只有"多粗、什么颜色"两个信息量。KAN 的一条边�
 
 from __future__ import annotations
 
-import torch.nn as nn
+from torch import nn
 
 from ..layers import KANLinear
 from .base import DescribeContext, FunctionCurve, LayerView, Role

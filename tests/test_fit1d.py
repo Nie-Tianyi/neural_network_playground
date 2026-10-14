@@ -70,7 +70,9 @@ def test_1d_noise_only_jitters_the_label() -> None:
 
     assert [p.x for p in clean.train] == [p.x for p in noisy.train]
     # 加了噪声之后标签要真的变了
-    assert any(abs(a.label - b.label) > 1e-3 for a, b in zip(clean.train, noisy.train))
+    assert any(
+        abs(a.label - b.label) > 1e-3 for a, b in zip(clean.train, noisy.train, strict=True)
+    )
 
 
 def test_1d_noise_shrinks_toward_the_clean_function() -> None:
@@ -147,7 +149,7 @@ def test_output_activation_is_linear_for_1d_fits(registry) -> None:
 def test_1d_input_column_has_a_single_node(registry) -> None:
     engine = Engine(registry)
     engine.configure(Config(model="kan", dataset="fit-sin", network_shape=(3,)))
-    graph, payload = engine.snapshot()
+    graph, _ = engine.snapshot()
 
     assert [(c.kind, c.width) for c in graph.columns] == [
         ("input", 1),
@@ -162,7 +164,7 @@ def test_1d_snapshot_returns_curves_not_heatmaps(registry) -> None:
     混了的话前端会拿热力图的画法去解读曲线数组。"""
     engine = Engine(registry)
     engine.configure(Config(model="kan", dataset="fit-sin", network_shape=(3,)))
-    graph, payload = engine.snapshot()
+    _, payload = engine.snapshot()
 
     assert "curves" in payload
     assert "heatmaps" not in payload
@@ -262,7 +264,7 @@ def test_target_function_is_reachable(registry) -> None:
     for _ in range(1200):
         engine.step()
 
-    graph, payload = engine.snapshot()
+    _, payload = engine.snapshot()
     prediction = payload["curves"][-1][:, 0]
     x_axis = engine._grid_input()[:, 0]
     truth = torch.tensor([math.pow(float(v), 3) / 9 for v in x_axis])

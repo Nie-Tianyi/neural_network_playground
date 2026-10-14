@@ -23,9 +23,9 @@ import importlib.util
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-import torch.nn as nn
+from torch import nn
 
 MARKER = "__playground_model__"
 
@@ -139,9 +139,14 @@ class ModelRegistry:
                 continue
             try:
                 module = _exec_fresh(path)
-            except Exception as exc:
-                # 语法错误/导入错误：记下来，但保留这个文件上一次成功的模型，
-                # 这样你正在编辑到一半时页面不会突然空掉。
+            except Exception as exc:  # noqa: BLE001 —— 见下
+                # 这里执行的是**用户的代码**，抛什么都有可能：SyntaxError、
+                # ImportError、甚至 torch 内部的 RuntimeError。一行行去枚举
+                # 只会让"编辑到一半保存"时页面直接空掉。
+                #
+                # 所以宽泛捕获是刻意的：记下错误，但保留这个文件上一次成功的
+                # 模型，让页面继续可用。这是 builtin_models.py 和 models.py
+                # 分成两个文件的原因的延伸。
                 errors[path.name] = f"{type(exc).__name__}: {exc}"
                 specs.update(
                     {k: v for k, v in self._specs.items() if _from_file(v, path)}

@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-import torch.nn as nn
+from torch import nn
 
 from .config import make_activation
 from .layers import KANLinear

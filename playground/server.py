@@ -24,15 +24,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import random
 from pathlib import Path
 
+import torch
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-
-import torch
 
 from . import serialize
 from .config import DEFAULTS, OPTIONS, Config
@@ -178,7 +178,11 @@ class Session:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # 训练中出错不该静默死掉
+            # 这里捕获得宽是对的：训练循环里可能抛任何东西（用户自定义层、
+            # torch 内部错误、序列化失败……），而**唯一不能接受的**是让它
+            # 静默退出、页面停在一个不动的画面上。停下来 + 把错误发出去。
             self.playing = False
+            log.exception("训练循环出错")
             await _safe_send(ws, {"type": "error", "message": f"{type(exc).__name__}: {exc}"})
 
 
@@ -248,16 +252,15 @@ def _config_from_payload(
     # 用 MLP 的默认 SGD/0.03 基本学不动）。放在服务端做而不是只靠前端，
     # 是因为 `?model=kan` 这种 URL 直接进来的路径也要生效 ——
     # 否则分享出去的链接会给别人一套错误的超参。
-    if "model" in payload and isinstance(payload["model"], str) and payload["model"] != base.model:
-        if registry is not None:
-            spec = registry.get(payload["model"])
-            if spec is not None:
-                base = base.replace(
-                    **{
-                        field: value
-                        for field, value in _model_defaults(spec).items()
-                    }
-                )
+    switching_model = (
+        "model" in payload
+        and isinstance(payload["model"], str)
+        and payload["model"] != base.model
+    )
+    if switching_model and registry is not None:
+        spec = registry.get(payload["model"])
+        if spec is not None:
+            base = base.replace(**_model_defaults(spec))
 
     kwargs: dict = {}
 
@@ -346,10 +349,13 @@ def _static_message(registry: ModelRegistry, cfg: Config) -> dict:
 
 
 async def _safe_send(ws: WebSocket, message: dict) -> None:
-    try:
+    """往一个可能已经断开的连接发消息 —— 发不出去就算了。
+
+    这里失败是常态而不是异常：浏览器关掉标签页、暂停时任务被取消，
+    都会让 send 抛。既不值得让调用方去处理，也不值得往日志里刷屏。
+    """
+    with contextlib.suppress(Exception):
         await ws.send_json(message)
-    except Exception:
-        pass
 
 
 # --- 应用 --------------------------------------------------------------------

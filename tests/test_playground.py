@@ -13,7 +13,7 @@ import math
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from playground.config import Config
 from playground.datasets import DATASETS, FEATURES, generate
@@ -122,7 +122,7 @@ def test_feature_scalar_and_tensor_agree(feature_id: str) -> None:
     feature = FEATURES[feature_id]
     xs = torch.tensor([-2.5, 0.0, 1.7, 4.2])
     ys = torch.tensor([3.1, -1.4, 0.0, 2.2])
-    expected = torch.tensor([feature.fn(float(x), float(y)) for x, y in zip(xs, ys)])
+    expected = torch.tensor([feature.fn(float(x), float(y)) for x, y in zip(xs, ys, strict=True)])
     assert torch.allclose(FEATURE_TORCH[feature_id](xs, ys), expected, atol=1e-6)
 
 
@@ -220,7 +220,7 @@ def test_reset_gives_a_fresh_initialization(registry: ModelRegistry) -> None:
     engine.reset()
     after = [p.detach().clone() for p in engine.model.parameters()]
 
-    assert any(not torch.equal(a, b) for a, b in zip(before, after))
+    assert any(not torch.equal(a, b) for a, b in zip(before, after, strict=True))
     assert engine.iter == 0
 
 
@@ -525,7 +525,7 @@ def test_feature_toggle_changes_input_width(registry: ModelRegistry) -> None:
     graph, _ = engine.snapshot()
     assert graph.columns[0].width == 7  # 列宽不变
     assert sum(n.active for n in graph.columns[0].nodes) == 4  # 4 个被打开
-    assert [len(layer) for layer in graph.edges][0] == 4 * 4  # 边数按打开的算
+    assert len(graph.edges[0]) == 4 * 4  # 边数按打开的算
 
 
 # --- 序列化 ------------------------------------------------------------------

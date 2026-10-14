@@ -29,13 +29,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
-import torch.nn as nn
+from torch import nn
 
 
-class Role(str, Enum):
+class Role(StrEnum):
+    """一个模块在图上扮演的角色。
+
+    用 `StrEnum` 而不是 `(str, Enum)`：后者 `str(Role.WEIGHT)` 会得到
+    `"Role.WEIGHT"` 而不是 `"weight"`，在日志和消息里发出去会很难读。
+    """
+
     WEIGHT = "weight"
     ELEMENTWISE = "elementwise"
     IGNORE = "ignore"
@@ -142,7 +148,7 @@ class LayerAdapter(Protocol):
 
     def matches(self, module: nn.Module) -> bool: ...
 
-    def describe(self, module: nn.Module, ctx: "DescribeContext") -> LayerView: ...
+    def describe(self, module: nn.Module, ctx: DescribeContext) -> LayerView: ...
 
     def role(self, module: nn.Module) -> Role:
         """只回答"这个模块扮演什么角色"，不构造绘制内容。
@@ -203,11 +209,20 @@ class Registry:
             return Role.IGNORE
         try:
             return adapter.role(module)
-        except Exception:
+        except Exception:  # noqa: BLE001 —— 见 describe() 的说明
             return Role.IGNORE
 
     def describe(self, module: nn.Module, ctx: DescribeContext) -> LayerView:
-        """解析并描述一个模块。认不出来就返回 Opaque 降级，不抛异常。"""
+        """解析并描述一个模块。认不出来就返回 Opaque 降级，不抛异常。
+
+        **这里的宽泛捕获是这个项目的核心设计，不是在偷懒**：整个卖点是
+        "用户随便写什么怪结构都不白屏"，所以 adapter 出错时必须降级成
+        opaque 继续画，而不是让这一帧整个失败。用户写自定义 adapter 时
+        同样会走到这条路径。
+
+        所以这条 `# noqa` 是逐处标注理由的，没有把它加进全局 ignore ——
+        别的地方新写的 `except Exception` 仍然会被 ruff 拦下来。
+        """
         adapter = self.resolve(module)
         if adapter is None:
             return LayerView(
@@ -217,7 +232,7 @@ class Registry:
             )
         try:
             return adapter.describe(module, ctx)
-        except Exception as exc:  # adapter 有 bug 也不该让整页白屏
+        except Exception as exc:  # noqa: BLE001 —— 见 docstring
             return LayerView(
                 role=Role.IGNORE,
                 kind="opaque",

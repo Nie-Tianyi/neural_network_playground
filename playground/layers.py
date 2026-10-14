@@ -27,10 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
-
+from torch import Tensor, nn
 
 # --- KAN ---------------------------------------------------------------------
 
@@ -287,9 +285,11 @@ class KANLinear(nn.Module):
         而不是固定的 grid_range —— 训练中网格会跟着数据移动，
         用固定定义域的话曲线会有一大段是平的，看不出信息。
         """
-        k, g = self.spline_order, self.grid_size
+        # 网格有效范围 = 去掉两侧各 k 个外扩节点后的那 G+1 个点，
+        # 也就是 grid[:, k] 到 grid[:, G+k]，而 G+k 就是 -(k+1)。
+        k = self.spline_order
         lo = self.grid[:, k]  # (in,)
-        hi = self.grid[:, -(k + 1)]  # (in,)  = grid[:, G+k]
+        hi = self.grid[:, -(k + 1)]  # (in,)
 
         t = torch.linspace(0, 1, samples, device=self.grid.device)
         xs = lo.unsqueeze(-1) + t.unsqueeze(0) * (hi - lo).unsqueeze(-1)  # (in, samples)

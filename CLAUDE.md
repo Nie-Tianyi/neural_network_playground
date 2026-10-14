@@ -10,12 +10,20 @@ PyTorch 版的 TensorFlow Playground：在浏览器里实时可视化神经网�
 
 ```bash
 uv run main.py                 # 启动，自动开浏览器（--no-browser / --port 8080）
-uv run pytest                  # 全部测试（约 20 秒）
+uv run pytest                  # 全部测试（约 3 分钟）
 uv run pytest -k "l1 or prune" # 按关键字筛选
 uv run pytest tests/test_playground.py::test_first_layer_edges_point_at_the_active_nodes  # 单个测试
+uv run ruff check .            # lint（配置在 pyproject.toml）
 ```
 
-没有配置 linter / formatter。
+**ruff 的规则集是显式列在 `pyproject.toml` 里的**（`[tool.ruff.lint] select`），
+不是靠默认值 —— 默认集随 ruff 版本变，钉住才能保证"本地跑是绿的"和"以后跑还是绿的"
+是同一件事。几条 ignore 都带了理由，改之前先读。
+
+**前端（`web/`）没有 linter**，只有 `node --check` 能查语法。所以改完前端必须截图，
+见下一节。
+
+格式化用 `uv run ruff format`，但注意它只覆盖 Python。
 
 ### 改完前端必须截图看一眼
 

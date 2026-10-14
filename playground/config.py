@@ -6,10 +6,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
-import torch
-import torch.nn as nn
+from torch import nn
 
 # --- 激活函数 ----------------------------------------------------------------
 # 前三个对应原版 nn.ts 的 Activations。linear 在原版里也有，
@@ -95,7 +94,7 @@ class Config:
     # 运行
     device: str = "cpu"
 
-    def replace(self, **kwargs) -> "Config":
+    def replace(self, **kwargs) -> Config:
         return replace(self, **kwargs)
 
     @property
