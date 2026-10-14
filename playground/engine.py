@@ -21,6 +21,8 @@
 
 from __future__ import annotations
 
+import functools
+import threading
 import zlib
 from dataclasses import dataclass
 
@@ -46,6 +48,17 @@ from .registry import ModelRegistry
 # 神经元小热力图的分辨率。原版就是把 100×100 按 10×10 块平均降采样到 10×10。
 # 神经元在界面上只占 30px，传全分辨率是纯浪费：每个神经元 100 字节就够了。
 NEURON_DENSITY = DENSITY // 10
+
+
+def _serialized(method):
+    """把 Engine 的公开方法串行化 —— 理由见 `Engine.__init__` 里那把锁。"""
+
+    @functools.wraps(method)
+    def wrapper(self: Engine, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 @dataclass
@@ -92,8 +105,23 @@ class Engine:
         # 这个引擎实例被 reset 过几次。用来给权重初始化派生种子 —— 见 reset()。
         self._reset_count = 0
 
+        # 串行化所有公开操作。
+        #
+        # 服务端把训练放在线程里跑（`asyncio.to_thread`，为了不阻塞事件循环），
+        # 而消息处理留在事件循环里 —— 两者都会碰同一个 Engine。没有这把锁时，
+        # 两条前向传播会交错，`Tracer` 的 forward hook 互相串味：网格快照里
+        # 会混进 batch_size 大小的**训练批次**，于是 `_as_grid` 报
+        # "网格点数 10 与 density=100 不符"（10 正好是默认 batch size）。
+        #
+        # 实测：训练线程 + 主线程并发取 60 次快照，50 次失败。加锁后 0 次。
+        #
+        # 用可重入锁是因为公开方法之间会互相调用（step → _refresh_grids、
+        # snapshot → _dead_masks_for）。单线程使用时几乎没有开销。
+        self._lock = threading.RLock()
+
     # --- 配置 ---------------------------------------------------------------
 
+    @_serialized
     def configure(self, cfg: Config) -> None:
         """应用新配置。
 
@@ -167,6 +195,7 @@ class Engine:
 
     # --- 生命周期 -----------------------------------------------------------
 
+    @_serialized
     def reset(self) -> None:
         """重新随机初始化权重、清空优化器状态。
 
@@ -254,6 +283,7 @@ class Engine:
 
     # --- 训练 ---------------------------------------------------------------
 
+    @_serialized
     def step(self) -> None:
         """跑一个 epoch（完整遍历一遍训练集）。"""
         assert self.model is not None and self.optimizer is not None and self.cfg is not None
@@ -362,6 +392,7 @@ class Engine:
 
     # --- 评估 ---------------------------------------------------------------
 
+    @_serialized
     def evaluate(self) -> Losses:
         assert self.model is not None
         self.model.eval()
@@ -419,6 +450,7 @@ class Engine:
         assert self.cfg is not None
         return DATASETS[self.cfg.dataset].features
 
+    @_serialized
     def snapshot(self) -> tuple[DisplayGraph, dict]:
         """跑一遍网格前向，产出这一帧的图和热力图。
 

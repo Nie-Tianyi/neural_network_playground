@@ -564,6 +564,52 @@ def test_heatmap_quantization_saturates(registry: ModelRegistry) -> None:
     assert raw[2] == 128  # 0.0 落在中间附近
 
 
+def test_snapshot_is_safe_while_training_in_another_thread(registry: ModelRegistry) -> None:
+    """训练和取快照并发时必须安全。
+
+    服务端把训练放在线程里跑（`asyncio.to_thread`，为了不阻塞事件循环），
+    而消息处理留在事件循环里 —— 两者都会碰同一个 Engine。
+
+    没有串行化的话，两条前向传播会交错，`Tracer` 的 forward hook 互相串味：
+    网格快照里会混进 **batch_size 大小的训练批次**，`_as_grid` 就报
+    "网格点数 10 与 density=100 不符"。这个 bug 真实发生过 ——
+    用户那边的表现是"点一下数据集就断连"，而 10 正好是默认 batch size。
+
+    修复前实测 60 次并发里失败 50 次，所以这个测试是真能抓到回归的。
+    """
+    import threading
+    import time
+
+    engine = Engine(registry)
+    engine.configure(Config(dataset="spiral", features=("x", "y"), network_shape=(6, 4)))
+
+    failures: list[str] = []
+    stop = threading.Event()
+
+    def train_forever() -> None:
+        try:
+            while not stop.is_set():
+                engine.step()
+        except Exception as exc:  # noqa: BLE001 —— 线程里的异常要带回主线程断言
+            failures.append(f"训练线程: {type(exc).__name__}: {exc}")
+
+    trainer = threading.Thread(target=train_forever, daemon=True)
+    trainer.start()
+    try:
+        time.sleep(0.05)  # 让训练线程先跑起来
+        for _ in range(40):
+            try:
+                engine.snapshot()
+            except Exception as exc:  # noqa: BLE001 —— 同上
+                failures.append(f"快照: {type(exc).__name__}: {exc}")
+    finally:
+        stop.set()
+        trainer.join(timeout=5)
+
+    assert not failures, "训练与快照并发时出错：\n" + "\n".join(failures[:3])
+    assert engine.iter > 0  # 训练线程确实在推进
+
+
 def test_build_graph_is_deterministic(registry: ModelRegistry) -> None:
     """同样的模型跑两次网格前向，结构必须完全一致
     —— 否则前端会因为"结构签名变了"每帧都重建一次 DOM。"""

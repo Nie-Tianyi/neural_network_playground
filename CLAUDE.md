@@ -153,6 +153,18 @@ canvas 绘制                              ← web/app.js + web/render/*
 
 网格前向用 `eval()` 模式（Dropout 不随机、BN 用滑动统计量），否则热力图每隔一帧就会抖一下。
 
+### ⚠️ Engine 的公开方法是被锁串行化的，别删
+
+`Engine.__init__` 里有一把 `threading.RLock`，`configure` / `reset` / `step` / `evaluate` / `snapshot` 五个公开方法用 `@_serialized` 装饰器统一加锁。
+
+**为什么需要**：服务端把训练放在线程里跑（`asyncio.to_thread`，为了不阻塞事件循环），而 WebSocket 消息处理留在事件循环里 —— 两者都会碰同一个 Engine。而 **`asyncio.to_thread` 是不可取消的**，所以 `session.stop()` 里的 `task.cancel()` 只是让等待它的协程退出，底层线程会把当前那一步跑完。
+
+没有这把锁时，两条前向传播会交错，`Tracer` 的 forward hook 互相串味：网格快照里混进 **batch_size 大小的训练批次**。
+
+**症状极难从表象推回原因**：报错是 `AssertionError: 网格点数 10 与 density=100 不符`，而 `10` 正好是默认 batch size —— 但报错位置在 `_as_grid`，跟并发毫无字面关系。用户看到的是"训练中点一下数据集就断连"。
+
+**复现方法**（改这块前后都该跑一遍）：一个线程循环 `engine.step()`，主线程并发调 `engine.snapshot()`。修复前 60 次里失败 50 次，加锁后 200 次全过。回归测试见 `test_snapshot_is_safe_while_training_in_another_thread`。
+
 ### registry.py 热重载
 
 **不能用 `importlib.reload`** —— 它就地重置已有模块，旧类还挂在别处引用上，会出现"改了代码但注册表还是老模型"甚至同一个 key 注册出两份。这里每次都用 `module_from_spec` + `exec_module` 建**全新的模块对象**，从一个干净的命名空间里重新收集。
